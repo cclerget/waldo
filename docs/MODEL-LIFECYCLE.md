@@ -698,6 +698,10 @@ the heartbeat off. `waldo model advisor` treats more than ten minutes without
 telemetry on a running model as a reason to inspect it, so keep the interval
 under 600 seconds. A resume first replays the steps it already trained without
 reporting, so the first progress line follows the end of that replay.
+After a resume, `tokens_per_second` and `eta_seconds` are measured from the end of
+the first trained step, so neither replaying the record stream up to the checkpoint
+nor that step's one-time start-up cost distorts them. A progress row that lands on
+that first step reports 0 tokens/s and no ETA.
 
 The MLX, PyTorch, and TorchTitan adapters embed their worker source in the
 WALDO binary while using the machine's explicit Python framework runtime. They
