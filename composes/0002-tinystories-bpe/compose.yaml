@@ -1,26 +1,27 @@
-# TinyStories-style Gate 1: verify the existing-corpus proxy and full training pipeline.
+# Promoted rung 0002: the first TinyStories model to pass every numerical and
+# behavioral gate in the reference ladder.
 kind: waldo-model-compose
 schema: 1
 architecture:
   family: decoder-transformer
   context_tokens: 512
-  vocabulary_size: 10000
-  hidden_size: 256
-  intermediate_size: 768
-  layers: 8
+  vocabulary_size: 4096
+  hidden_size: 512
+  intermediate_size: 1536
+  layers: 9
   attention_heads: 8
-  key_value_heads: 2
-  dropout: 0.0
-  qk_normalization: true
+  key_value_heads: 8
+  dropout: 0.2
+  qk_normalization: false
   initialization: depth-scaled
   tie_embeddings: true
   parameter_dtype: float32
   tokenizer:
     training:
       algorithm: byte-bpe-v1
-      sample_bytes: 268435456
+      sample_bytes: 134217728
       seed: 42
-      max_token_inflation: 0.35
+      max_token_inflation: 0.50
       distribution_policy: distributable
       filter:
         main_content: true
@@ -33,34 +34,29 @@ stages:
   - name: tinystories-pretrain
     type: pre-training
     objective: causal-language-modeling
-    filter:
-      main_content: true
-      exclude:
-        repetitive_content: true
-        boilerplate_content: true
     corpora:
-      - path: core/synthetic/cosmopedia-v2
-        weight: 1
+      - core/synthetic/tinystories-reference
     parameters:
-      profile: causal-pretrain-weighted
+      profile: causal-pretrain-shuffled
       parallelism: auto
-      tokens: 10000000
-      batch_size: 64
-      gradient_accumulation_steps: 4
-      compute_precision: bfloat16
+      tokens: 613611520
+      batch_size: 12
+      gradient_accumulation_steps: 3
+      compute_precision: auto
       activation_checkpointing: false
       compile: false
       sequence_length: 512
-      learning_rate: 0.0005
+      learning_rate: 0.0006
       optimizer: adamw
-      schedule: warmup-stable-warmdown
+      schedule: cosine
       seed: 42
       weight_decay: 0.1
-      warmup_steps: 15
-      warmdown_steps: 31
+      warmup_steps: 100
+      checkpoint_every: 250
+      evaluate_every: 250
       shuffle_buffer_records: 32768
       shuffle_buffer_bytes: 1073741824
-      checkpoint_every: 100
-      evaluate_every: 100
+      evaluation_selection: lowest-sha256-v1
+      evaluation_fraction: 0.01
       evaluation_max_records: 512
       evaluation_max_bytes: 16777216

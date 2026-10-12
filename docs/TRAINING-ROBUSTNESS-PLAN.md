@@ -220,9 +220,10 @@ Before training, every proposed run must identify exactly one track:
 - **from-scratch foundation:** produce a reusable base model; or
 - **product:** produce a useful assistant or domain model.
 
-The current foundation ladders are frozen. Their YAML files and results remain
-evidence. No 125M promotion, post-training expansion, or new weight mixture is
-authorized by the 32M general run.
+The failed foundation ladders are frozen and removed from the current compose
+tree. Their YAML files and results remain recoverable from Git and persisted
+model artifacts. No 125M promotion, post-training expansion, or new weight
+mixture is authorized by the 32M general run.
 
 Exit gate: the run proposal names one track, one hypothesis, one independent
 baseline, one changed variable, a budget, and a stop condition.
@@ -395,15 +396,13 @@ one experiment registry whose entries contain:
 - summaries, telemetry, quantitative report, and sample artifacts; and
 - final decision: pass, fail, inconclusive, or invalid.
 
-Only promoted recipes belong in the top-level compose ladder. Exploratory
-composes live under a dated experiment directory and are closed with a result.
-No new compose is added merely because a run failed. A failed gate blocks its
-dependent runs in documentation and automation.
-
-The immediate compose cleanup is documentation-only: mark the existing
-general-foundation, TinyStories-proxy, and assistant-EOS sequences complete or
-failed and frozen. Move files only after the validation harness has a stable
-home, so history is not rearranged while the plan is still being implemented.
+Only recipes that pass every precommitted numerical and behavioral gate belong
+in the compose ladder. Candidates are trained from an experiment branch or a
+temporary compose path and are removed before merge when any gate fails. Git,
+the exact compose stored with run artifacts, telemetry, and evaluation outputs
+provide experiment history; the current compose tree is a catalog of promoted
+models rather than an archive. A failed gate blocks dependent runs in
+documentation and automation.
 
 ## Ordered implementation backlog
 
