@@ -8,6 +8,21 @@ The ladder grows **capability, data, and model size together**. Each rung has a
 realistic job. A model is promoted only when it performs that job; completing a
 token budget or reaching a low aggregate loss is not enough.
 
+## Directory layout
+
+The top level contains this ladder plan and one directory for each promoted
+rung. Every rung directory contains:
+
+```text
+README.md       purpose, evidence, gates, and commands
+compose.yaml    immutable promoted training recipe
+compose_test.go guards for the rung's model and training contract
+evaluate.sh     fixed behavioral evaluation probes
+```
+
+Planned, failed, and sub-par candidates do not get rung directories. They stay
+on experiment branches or in temporary workspaces until they pass promotion.
+
 ## What tokens per parameter means here
 
 Twenty training tokens per core parameter is a useful compute-allocation
