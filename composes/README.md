@@ -94,13 +94,15 @@ quality, not a favorable training loss, decides promotion.
 
 ## Ladder definition
 
-The first two rungs are passed references. Later rungs are specifications, not
-promoted composes. Their YAML enters this directory only after it passes.
+The first two rungs are passed references. Each promoted rung is a
+self-contained directory with its compose, tests, evaluator, and evidence.
+Later rungs are specifications, not promoted composes. Their directory enters
+this tree only after the model passes.
 
 | Rung | Target | Approximate core capacity | Required data | Budget policy | Minimum promotion capability | Status |
 | --- | --- | ---: | --- | --- | --- | --- |
-| 0001 | End-to-end systems control | 10M | Tiny Shakespeare | Fixed reference run | Locally plausible play continuation and correct checkpoint selection | Passed |
-| 0002 | Narrow story language model | 30M | TinyStories reference | 20 core TPP | Retain entities and causality, avoid loops, terminate with EOS | Passed |
+| [0001](0001-tiny-shakespeare/) | End-to-end systems control | 10M | Tiny Shakespeare | Fixed reference run | Locally plausible play continuation and correct checkpoint selection | Passed |
+| [0002](0002-tinystories-bpe/) | Narrow story language model | 30M | TinyStories reference | 20 core TPP | Retain entities and causality, avoid loops, terminate with EOS | Passed |
 | 0003 | Elementary language and facts | 30-50M | Full TinyStories plus filtered elementary educational and reference text | 20/40/80/160 core TPP checkpoints | Short grammatical continuation; simple facts and arithmetic; low repetition; reliable EOS | Planned |
 | 0004 | Compact general foundation | 100-150M | Rung 0003 data plus broad high-quality educational, textbook, reference, math, and technical text | 20/40/80/160 core TPP checkpoints, then review | Correct basic factual answers, coherent paragraph explanations, basic technical knowledge, low repetition | Planned |
 | 0005 | Small assistant | Derived from passed 0004 | Curated supervised QA/instructions with an explicit interaction contract and assistant EOS | Short post-training stages with retention checks | Direct answers, instruction following, role isolation, EOS, and no material foundation regression | Planned |
@@ -172,53 +174,6 @@ metadata-aware filtering is an implementation prerequisite for rung 0003. It
 should extend selection over existing shards; it should not create duplicate
 filtered corpora.
 
-## Rung 0001: Tiny Shakespeare reference
-
-[`0001-tiny-shakespeare.yaml`](0001-tiny-shakespeare.yaml) is the small
-end-to-end systems reference:
-
-- model `tiny-shakespeare-control-01`, ID `b4f8477a55ad`;
-- 10.7M parameters and 81.92M byte tokens;
-- held-out loss improved from 5.3814 to 1.5117;
-- step 1,250 was selected and reloaded after later overtraining;
-- sampled output preserved play formatting and locally plausible language; and
-- training completed in under 15 minutes on two H200 GPUs.
-
-```console
-go run ./cmd/waldo/ model forecast composes/0001-tiny-shakespeare.yaml
-go run ./cmd/waldo/ model train tiny-shakespeare-control-01 \
-  composes/0001-tiny-shakespeare.yaml
-./composes/evaluate-tiny-shakespeare.sh \
-  tiny-shakespeare-control-01 /tmp/tiny-shakespeare-control-01-eval.jsonl
-```
-
-## Rung 0002: TinyStories BPE reference
-
-[`0002-tinystories-bpe.yaml`](0002-tinystories-bpe.yaml) is the first
-TinyStories recipe that passed every promotion gate:
-
-- model `tinystories-bpe-20tpp-01`, ID `5d18938fa102`, run
-  `3ee94d2f3e466ce2`;
-- 32.8M parameters, a 4K PressBooks-trained byte BPE, and 512-token context;
-- 613,613,568 packed targets, or 20 tokens per core parameter;
-- held-out loss 1.042866 and 0.498234 BPB;
-- seven of eight sampled continuations retained prompt entities and causality;
-- no sampled and one greedy continuation entered a clear repetition loop; and
-- all eight long-horizon samples emitted EOS.
-
-```console
-go run ./cmd/waldo/ model forecast composes/0002-tinystories-bpe.yaml \
-  --preflight
-go run ./cmd/waldo/ model train tinystories-bpe-20tpp-01 \
-  composes/0002-tinystories-bpe.yaml --hostfile ~/hostfile
-./composes/evaluate-tinystories.sh \
-  tinystories-bpe-20tpp-01 /tmp/tinystories-bpe-eval.jsonl
-./composes/evaluate-tinystories.sh \
-  tinystories-bpe-20tpp-01 /tmp/tinystories-bpe-greedy.jsonl 0 42
-./composes/evaluate-tinystories.sh \
-  tinystories-bpe-20tpp-01 /tmp/tinystories-bpe-eos.jsonl 0.8 42 1536
-```
-
 ## Candidate workflow
 
 For each next rung:
@@ -231,10 +186,9 @@ For each next rung:
    those controls;
 5. diagnose failure as data, optimization, exposure, or capacity using the
    loss curve and per-probe results; and
-6. add the successful compose with the next contiguous number only after every
-   gate passes.
+6. add the successful rung directory with `README.md`, `compose.yaml`,
+   `compose_test.go`, and `evaluate.sh` only after every gate passes.
 
 The immediate work is rung 0003: implement metadata predicates over existing
 canonical shards, ingest the missing priority-1 corpora, freeze the elementary
-evaluation fixture, and build the smallest candidate that can pass it. The
-scripts in this directory are evaluation utilities and are not rungs.
+evaluation fixture, and build the smallest candidate that can pass it.
