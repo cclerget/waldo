@@ -6,6 +6,7 @@
 package corpus
 
 import (
+	"encoding/json"
 	"fmt"
 	"path"
 	"regexp"
@@ -34,12 +35,13 @@ type RecordFilterPolicy struct {
 }
 
 type RecordFilter struct {
-	MainContent *bool            `json:"main_content,omitempty" yaml:"main_content,omitempty"`
-	Exclude     *ExclusionFilter `json:"exclude,omitempty" yaml:"exclude,omitempty"`
-	Licenses    *ValueFilter     `json:"licenses,omitempty" yaml:"licenses,omitempty"`
-	Languages   *ValueFilter     `json:"languages,omitempty" yaml:"languages,omitempty"`
-	Sources     *ValueFilter     `json:"sources,omitempty" yaml:"sources,omitempty"`
-	Date        *DateFilter      `json:"date,omitempty" yaml:"date,omitempty"`
+	MainContent *bool                  `json:"main_content,omitempty" yaml:"main_content,omitempty"`
+	Exclude     *ExclusionFilter       `json:"exclude,omitempty" yaml:"exclude,omitempty"`
+	Licenses    *ValueFilter           `json:"licenses,omitempty" yaml:"licenses,omitempty"`
+	Languages   *ValueFilter           `json:"languages,omitempty" yaml:"languages,omitempty"`
+	Sources     *ValueFilter           `json:"sources,omitempty" yaml:"sources,omitempty"`
+	Metadata    map[string]ValueFilter `json:"metadata,omitempty" yaml:"metadata,omitempty"`
+	Date        *DateFilter            `json:"date,omitempty" yaml:"date,omitempty"`
 }
 
 // ExclusionFilter is the canonical deny-list form. A record is excluded when
@@ -110,6 +112,14 @@ func (filter RecordFilter) Validate() error {
 			}
 		}
 	}
+	for key, values := range filter.Metadata {
+		if key == "" {
+			return fmt.Errorf("metadata keys must not be empty")
+		}
+		if err := values.Validate(); err != nil {
+			return fmt.Errorf("metadata.%s: %w", key, err)
+		}
+	}
 	if filter.Date != nil {
 		if err := filter.Date.Validate(); err != nil {
 			return err
@@ -122,7 +132,7 @@ func (filter RecordFilter) Validate() error {
 }
 
 func (filter RecordFilter) empty() bool {
-	return filter.MainContent == nil && filter.Exclude == nil && filter.Licenses == nil && filter.Languages == nil && filter.Sources == nil && filter.Date == nil
+	return filter.MainContent == nil && filter.Exclude == nil && filter.Licenses == nil && filter.Languages == nil && filter.Sources == nil && len(filter.Metadata) == 0 && filter.Date == nil
 }
 
 func (filter ExclusionFilter) Validate() error {
@@ -237,7 +247,31 @@ func (filter RecordFilter) Allows(record shard.RecordView) bool {
 	if filter.Sources != nil && !filter.Sources.AllowsAny(record.Source, record.SourceName) {
 		return false
 	}
+	if !filter.allowsMetadata(record.Metadata) {
+		return false
+	}
 	return filter.Date == nil || filter.Date.Allows(record.Date)
+}
+
+func (filter RecordFilter) allowsMetadata(raw string) bool {
+	if len(filter.Metadata) == 0 {
+		return true
+	}
+	values := map[string]json.RawMessage{}
+	if raw == "" || json.Unmarshal([]byte(raw), &values) != nil {
+		return false
+	}
+	for key, constraint := range filter.Metadata {
+		var value string
+		encoded, exists := values[key]
+		if exists && json.Unmarshal(encoded, &value) != nil {
+			return false
+		}
+		if !constraint.Allows(value) {
+			return false
+		}
+	}
+	return true
 }
 
 func (filter ExclusionFilter) Matches(record shard.RecordView) bool {

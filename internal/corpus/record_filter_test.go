@@ -86,6 +86,31 @@ func TestLanguageFilterCanExplicitlyIncludeUnsetRows(t *testing.T) {
 	}
 }
 
+func TestMetadataFilterSelectsCanonicalMetadata(t *testing.T) {
+	filter := RecordFilter{Metadata: map[string]ValueFilter{
+		"audience": {Include: []string{"middle_school_students"}},
+		"format":   {Include: []string{"textbook"}},
+	}}
+	if err := filter.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if !filter.Allows(shard.RecordView{Metadata: `{"audience":"middle_school_students","format":"textbook"}`}) {
+		t.Fatal("matching metadata was rejected")
+	}
+	for name, metadata := range map[string]string{
+		"wrong value": `{"audience":"college_students","format":"textbook"}`,
+		"missing key": `{"audience":"middle_school_students"}`,
+		"malformed":   `{`,
+		"non-string":  `{"audience":12,"format":"textbook"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if filter.Allows(shard.RecordView{Metadata: metadata}) {
+				t.Fatal("nonmatching metadata was allowed")
+			}
+		})
+	}
+}
+
 func TestUnifiedExclusionFilterMatchesContentFlagsOrLicenses(t *testing.T) {
 	present, absent := true, false
 	filter := RecordFilter{Exclude: &ExclusionFilter{

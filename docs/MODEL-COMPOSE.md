@@ -448,6 +448,11 @@ corpora:
         include_unset: true
       sources:
         exclude: [deprecated-*]
+      metadata:
+        audience:
+          include: [middle_school_students]
+        format:
+          include: [textbook]
       date:
         from: "1900"
         to: "2025-06-30"
@@ -465,6 +470,7 @@ corpora:
 | `licenses` | no | Matches the canonical row's normalized license. |
 | `languages` | no | Matches the canonical row's language. |
 | `sources` | no | Matches either the canonical source identifier or source name. |
+| `metadata` | no | Maps canonical `meta` JSON keys to value filters. Each declared key must contain a string value and all declared keys must match. Missing, malformed, or non-string values are rejected. |
 | `date` | no | Selects canonical dates that overlap the inclusive `from`/`to` interval. |
 | `include` | no | At least one shell-style, case-sensitive pattern must match. |
 | `exclude` | no | Any matching pattern rejects the record and takes precedence over `include`. |

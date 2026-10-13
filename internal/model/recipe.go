@@ -248,7 +248,7 @@ func validateCorpusSelectionYAML(node *yaml.Node) error {
 }
 
 func validateRecordFilterYAML(node *yaml.Node) error {
-	if err := knownYAMLFields(node, map[string]bool{"main_content": true, "exclude": true, "licenses": true, "languages": true, "sources": true, "date": true}); err != nil {
+	if err := knownYAMLFields(node, map[string]bool{"main_content": true, "exclude": true, "licenses": true, "languages": true, "sources": true, "metadata": true, "date": true}); err != nil {
 		return err
 	}
 	for index := 0; index < len(node.Content); index += 2 {
@@ -263,12 +263,28 @@ func validateRecordFilterYAML(node *yaml.Node) error {
 			if err := knownYAMLFields(value, map[string]bool{"repetitive_content": true, "boilerplate_content": true, "licenses": true}); err != nil {
 				return err
 			}
+		} else if key == "metadata" {
+			if err := knownYAMLMapValues(value, map[string]bool{"include": true, "exclude": true}); err != nil {
+				return err
+			}
 		} else if key == "languages" {
 			if err := knownYAMLFields(value, map[string]bool{"include": true, "exclude": true, "include_unset": true}); err != nil {
 				return err
 			}
 		} else if err := knownYAMLFields(value, map[string]bool{"include": true, "exclude": true}); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func knownYAMLMapValues(node *yaml.Node, allowed map[string]bool) error {
+	if node.Kind != yaml.MappingNode {
+		return fmt.Errorf("expected a mapping")
+	}
+	for index := 0; index < len(node.Content); index += 2 {
+		if err := knownYAMLFields(node.Content[index+1], allowed); err != nil {
+			return fmt.Errorf("%s: %w", node.Content[index].Value, err)
 		}
 	}
 	return nil
