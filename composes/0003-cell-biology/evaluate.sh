@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Evaluate candidate rung 0003 with precommitted raw-continuation probes.
+# Evaluate candidate rung 0003 with genetics and cell-biology probes.
 set -euo pipefail
 
 if (($# < 3 || $# > 6)); then
@@ -16,24 +16,24 @@ max_tokens="${6:-80}"
 run_id="$(go run ./cmd/waldo/ --json model summary "$model" | jq -r '.bom.current_run_id')"
 
 facts=(
-  'The capital city of France is'
-  'Two plus two equals'
-  'At sea level, water freezes at'
-  'The planet closest to the Sun is'
-  'Plants use sunlight to make food through a process called'
-  'The largest ocean on Earth is the'
-  'A triangle has'
-  'The chemical formula for water is'
-  'The author of Romeo and Juliet was'
-  'Earth travels around the Sun in about'
+  'DNA is the molecule that stores'
+  'A gene is a segment of'
+  'The four bases in DNA are'
+  'In DNA, adenine pairs with'
+  'RNA contains uracil instead of'
+  'Ribosomes build'
+  'The cell membrane controls'
+  'Mitosis produces'
+  'Meiosis produces'
+  'Proteins are made from'
 )
 
 explanations=(
-  'Photosynthesis is the process by which plants'
-  'A volcano erupts when'
-  'In the water cycle, evaporation happens when'
-  'The Moon appears to shine because'
-  'A simple machine makes work easier by'
+  'DNA replication begins when'
+  'During transcription, a cell'
+  'During translation, a ribosome'
+  'Mitosis and meiosis differ because'
+  'A genetic mutation can affect a protein when'
 )
 
 stories=(

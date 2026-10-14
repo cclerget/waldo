@@ -1,5 +1,5 @@
-# Candidate rung 0003: preserve TinyStories language behavior while adding a
-# deliberately narrow elementary educational domain.
+# Candidate rung 0003: preserve TinyStories language behavior while learning
+# one bounded knowledge domain: genetics and cell biology.
 kind: waldo-model-compose
 schema: 1
 architecture:
@@ -31,7 +31,7 @@ architecture:
       corpora:
         - core/common-pile/pressbooks
 stages:
-  - name: elementary-pretrain
+  - name: cell-biology-pretrain
     type: pre-training
     objective: causal-language-modeling
     filter:
@@ -40,16 +40,36 @@ stages:
         repetitive_content: true
         boilerplate_content: true
     corpora:
-      - path: core/synthetic/cosmopedia-v2
+      - path: science/plos
         weight: 7
         filter:
           metadata:
-            audience:
-              include: [middle_school_students]
-            format:
-              include: [textbook]
+            journal:
+              include: [PLOS Genetics]
+      - path: core/common-pile/wikimedia
+        weight: 1
+        filter:
+          metadata:
+            wiki:
+              include: [wikibooks.com]
+            title:
+              include:
+                - Structural Biochemistry*
+                - Handbook of Genetic Counseling*
+                - Proteomics*
+                - Cell Biology*
+                - General Biology*
+                - FHSST Biology*
+                - Biochemistry*
+                - High School Biology*
+                - General Genetics*
+                - Principles of Biochemistry*
+                - Saylor.org's Cell Biology*
+                - An Introduction to Molecular Biology*
+                - Molecular Cloning*
+                - Genetic Information*
       - path: core/synthetic/tinystories-reference
-        weight: 3
+        weight: 2
     parameters:
       profile: causal-pretrain-weighted
       parallelism: auto

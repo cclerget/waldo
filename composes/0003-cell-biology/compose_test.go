@@ -1,7 +1,7 @@
 // Copyright (c) 2026 OpenWALDO Project contributors
 // SPDX-License-Identifier: Apache-2.0
 
-package elementaryfoundation_test
+package cellbiology_test
 
 import (
 	"reflect"
@@ -28,15 +28,19 @@ func TestCandidateContract(t *testing.T) {
 	}
 
 	stage := compose.Stages[0]
-	if stage.Name != "elementary-pretrain" || len(stage.Corpora) != 2 {
+	if stage.Name != "cell-biology-pretrain" || len(stage.Corpora) != 3 {
 		t.Fatalf("stage changed: %+v", stage)
 	}
-	if stage.Corpora[0].Path != "core/synthetic/cosmopedia-v2" || stage.Corpora[0].Weight == nil || *stage.Corpora[0].Weight != 7 || stage.Corpora[1].Path != "core/synthetic/tinystories-reference" || stage.Corpora[1].Weight == nil || *stage.Corpora[1].Weight != 3 {
+	if stage.Corpora[0].Path != "science/plos" || stage.Corpora[0].Weight == nil || *stage.Corpora[0].Weight != 7 || stage.Corpora[1].Path != "core/common-pile/wikimedia" || stage.Corpora[1].Weight == nil || *stage.Corpora[1].Weight != 1 || stage.Corpora[2].Path != "core/synthetic/tinystories-reference" || stage.Corpora[2].Weight == nil || *stage.Corpora[2].Weight != 2 {
 		t.Fatalf("mixture changed: %+v", stage.Corpora)
 	}
-	metadata := stage.Corpora[0].Filter.Metadata
-	if !reflect.DeepEqual(metadata["audience"].Include, []string{"middle_school_students"}) || !reflect.DeepEqual(metadata["format"].Include, []string{"textbook"}) {
-		t.Fatalf("Cosmopedia view changed: %+v", metadata)
+	plos := stage.Corpora[0].Filter.Metadata
+	if !reflect.DeepEqual(plos["journal"].Include, []string{"PLOS Genetics"}) {
+		t.Fatalf("PLOS view changed: %+v", plos)
+	}
+	wikibooks := stage.Corpora[1].Filter.Metadata
+	if !reflect.DeepEqual(wikibooks["wiki"].Include, []string{"wikibooks.com"}) || len(wikibooks["title"].Include) != 14 {
+		t.Fatalf("Wikibooks view changed: %+v", wikibooks)
 	}
 
 	architecture := compose.Architecture
