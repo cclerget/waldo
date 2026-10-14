@@ -38,9 +38,9 @@ func TestCandidateContract(t *testing.T) {
 	if !reflect.DeepEqual(plos["journal"].Include, []string{"PLOS Genetics"}) {
 		t.Fatalf("PLOS view changed: %+v", plos)
 	}
-	wikibooks := stage.Corpora[1].Filter.Metadata
-	if !reflect.DeepEqual(wikibooks["wiki"].Include, []string{"wikibooks.com"}) || len(wikibooks["title"].Include) != 14 {
-		t.Fatalf("Wikibooks view changed: %+v", wikibooks)
+	wikimedia := stage.Corpora[1].Filter.Metadata
+	if !reflect.DeepEqual(wikimedia["wiki"].Include, []string{"wikipedia.com", "wikibooks.com"}) || len(wikimedia["title"].Include) != 42 {
+		t.Fatalf("Wikimedia view changed: %+v", wikimedia)
 	}
 
 	architecture := compose.Architecture

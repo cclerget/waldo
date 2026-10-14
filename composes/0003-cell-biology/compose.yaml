@@ -51,23 +51,56 @@ stages:
         filter:
           metadata:
             wiki:
-              include: [wikibooks.com]
+              include: [wikipedia.com, wikibooks.com]
             title:
               include:
-                - Structural Biochemistry*
-                - Handbook of Genetic Counseling*
-                - Proteomics*
-                - Cell Biology*
-                - General Biology*
-                - FHSST Biology*
-                - Biochemistry*
-                - High School Biology*
-                - General Genetics*
-                - Principles of Biochemistry*
-                - Saylor.org's Cell Biology*
-                - An Introduction to Molecular Biology*
-                - Molecular Cloning*
-                - Genetic Information*
+                # Directly relevant Wikipedia article families. Avoid broad
+                # substring matches: this is a bounded molecular-biology view.
+                - DNA*
+                - RNA*
+                - Gene
+                - Gene *
+                - Gene-*
+                - Genes
+                - Genes *
+                - Genetic*
+                - Genome*
+                - Chromosome*
+                - Cell
+                - Cell *
+                - Cell-*
+                - Cellular*
+                - Mitosis*
+                - Meiosis*
+                - Protein*
+                - Amino acid*
+                - Ribosome*
+                - Transcription*
+                - Translation*
+                - Mutation*
+                # Go shell globs do not let `*` cross `/`. Enumerate the
+                # useful Wikibooks hierarchy depths rather than silently
+                # selecting no chapters.
+                - Structural Biochemistry
+                - Structural Biochemistry/*
+                - Structural Biochemistry/*/*
+                - Structural Biochemistry/*/*/*
+                - Structural Biochemistry/*/*/*/*
+                - Cell Biology
+                - Cell Biology/*
+                - Cell Biology/*/*
+                - General Biology
+                - General Biology/*
+                - General Biology/*/*
+                - General Biology/*/*/*
+                - General Genetics
+                - General Genetics/*
+                - Principles of Biochemistry
+                - Principles of Biochemistry/*
+                - Principles of Biochemistry/*/*
+                - An Introduction to Molecular Biology
+                - An Introduction to Molecular Biology/*
+                - An Introduction to Molecular Biology/*/*
       - path: core/synthetic/tinystories-reference
         weight: 2
     parameters:

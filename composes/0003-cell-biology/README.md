@@ -20,19 +20,21 @@ This replacement remains **unpromoted** until every gate below passes.
   targets after complete optimizer steps.
 - The weighted token mixture is:
   - 70% peer-reviewed articles from the `PLOS Genetics` journal;
-  - 10% a fixed set of genetics, cell-biology, molecular-biology,
-    biochemistry, and proteomics Wikibooks; and
+  - 10% Wikipedia article families and Wikibook chapters whose titles are
+    explicitly about molecular genetics, cell biology, or biochemistry; and
   - 20% TinyStories reference for language, causality, and EOS retention.
-- Wikimedia selection requires `wiki=wikibooks.com` plus one of the explicit
-  title prefixes in `compose.yaml`. Namespace-zero main-content selection was
-  already applied during ingestion.
+- Wikimedia selection requires `wiki` to be `wikipedia.com` or
+  `wikibooks.com` plus one of the explicit title patterns in `compose.yaml`.
+  The Wikibooks hierarchy depths are enumerated because shell `*` does not
+  cross `/`. Namespace-zero main-content selection was already applied during
+  ingestion.
 - No Cosmopedia, broad Wikimedia, other PLOS journals, arithmetic, geography,
   astronomy, history, literature, QA, or instruction data is included.
 
-The PLOS and Wikibooks records are independently authored, grounded sources.
+The PLOS and Wikimedia records are independently authored, grounded sources.
 PLOS provides volume and factual consistency within one research field;
-Wikibooks supplies definitions and explanatory structure closer to the raw
-continuation probes.
+the title-selected reference material supplies definitions and explanatory
+structure closer to the raw continuation probes.
 
 ## Promotion gates
 
@@ -52,6 +54,22 @@ All gates are frozen before training:
 
 This remains a raw causal foundation model. Chat behavior, instruction
 following, concise answers, and assistant formatting are out of scope.
+
+## Preflight evidence
+
+The frozen selection was measured on the indexed corpora before training:
+
+- 269.5M unique tokenizer targets and 2.5B planned targets, for 9.11 aggregate
+  effective passes;
+- 5.6K `PLOS Genetics` records at 15.61 effective passes;
+- 3.6K title-selected Wikimedia records at 35.20 effective passes;
+- 508.9K TinyStories records at 3.22 effective passes; and
+- 90.3% of selected records fit within one 512-token sequence.
+
+The Wikimedia replay is intentionally concentrated, but it accounts for only
+10% of planned tokens and supplies the bounded reference facts measured by the
+frozen probes. This candidate must not be generalized beyond the declared
+molecular-genetics and cell-biology capability.
 
 ## Run
 
@@ -74,9 +92,9 @@ go run ./cmd/waldo/ model train cell-biology-30m-80tpp-01 \
 ```
 
 Before training, the preflight must show only `PLOS Genetics`, the declared
-Wikibook prefixes, and TinyStories. If the selected grounded corpus is too
-small and would be repeated excessively, stop and revise the sources rather
-than training.
+molecular-biology Wikimedia view, and TinyStories. Review both total and
+per-corpus effective passes; do not infer suitability from the aggregate token
+budget alone.
 
 ## Promotion decision
 

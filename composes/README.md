@@ -118,7 +118,7 @@ this tree only after the model passes.
 | --- | --- | ---: | --- | --- | --- | --- |
 | [0001](0001-tiny-shakespeare/) | End-to-end systems control | 10M | Tiny Shakespeare | Fixed reference run | Locally plausible play continuation and correct checkpoint selection | Passed |
 | [0002](0002-tinystories-bpe/) | Narrow story language model | 30M | TinyStories reference | 20 core TPP | Retain entities and causality, avoid loops, terminate with EOS | Passed |
-| 0003 | Genetics and cell-biology foundation | 30-50M | PLOS Genetics, explicitly selected cell/genetics Wikibooks, and TinyStories retention data | 80 core TPP, then evidence review | Correct basic genetics and cell-biology continuations; retained stories; low repetition; reliable EOS | Candidate |
+| 0003 | Genetics and cell-biology foundation | 30-50M | PLOS Genetics, title-selected molecular-biology Wikimedia, and TinyStories retention data | 80 core TPP, then evidence review | Correct basic genetics and cell-biology continuations; retained stories; low repetition; reliable EOS | Candidate |
 | 0004 | Compact general foundation | 100-150M | Rung 0003 data plus broad high-quality educational, textbook, reference, math, and technical text | 20/40/80/160 core TPP checkpoints, then review | Correct basic factual answers, coherent paragraph explanations, basic technical knowledge, low repetition | Planned |
 | 0005 | Small assistant | Derived from passed 0004 | Curated supervised QA/instructions with an explicit interaction contract and assistant EOS | Short post-training stages with retention checks | Direct answers, instruction following, role isolation, EOS, and no material foundation regression | Planned |
 | 0006 | Elementary reasoning and technical assistant | 250-400M, justified by 0004 scaling evidence | Passed foundation mix plus licensed math, science, and code/technical data | Scaling prediction plus matched checkpoints | Multi-step elementary reasoning, basic code explanation, and retained general/assistant behavior | Planned |
@@ -154,7 +154,7 @@ declared capability gap and pass WALDO's provenance and redistribution policy.
 | Priority | Corpus or view | Rung | Purpose | Action |
 | --- | --- | --- | --- | --- |
 | 1 | PLOS Genetics view | 0003 | Grounded volume in one bounded scientific domain | Filter the existing journal metadata; do not duplicate shards |
-| 1 | Cell/genetics Wikibooks view | 0003 | Definitions and explanatory prose in the same domain | Filter existing wiki/title metadata using the frozen prefix set |
+| 1 | Cell/genetics Wikimedia view | 0003 | Definitions and explanatory prose in the same domain | Filter existing wiki/title metadata using the frozen topic-title set |
 | 1 | Full TinyStories | 0003 | Preserve proven grammar, entity, causality, and EOS behavior | Ingest all source shards when available; current reference is explicitly a subset |
 | 2 | Open Textbook Library permissive subset | 0004 | Coherent instructional chapters across subjects | Ingest only books with compatible per-item licenses |
 | 2 | Existing PressBooks, LibreTexts, Wikimedia, and Stack-Edu views | 0004/0006 | Textbooks, reference knowledge, and technical language | Improve selection and metadata filters before adding volume |
@@ -203,5 +203,6 @@ For each next rung:
    `compose_test.go`, and `evaluate.sh` only after every gate passes.
 
 The immediate work is rung 0003: validate the preflight size and exposure of
-the PLOS Genetics and cell/genetics Wikibooks views, then train the fixed 30M
-candidate against the frozen single-domain evaluation fixture.
+the PLOS Genetics and title-selected molecular-biology Wikimedia views, then
+train the fixed 30M candidate against the frozen single-domain evaluation
+fixture.
