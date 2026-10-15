@@ -1,208 +1,180 @@
 # Validated capability ladder
 
-This directory contains only reproducible model recipes that passed every
-precommitted numerical and behavioral promotion gate. It is a catalog of
-known-good reference models, not an experiment log.
+This directory is a catalog of reproducible models that passed every declared
+gate. It is not a roadmap and it is not an experiment log. At present the
+validated ladder ends at rung 0002.
 
-The ladder grows **capability, data, and model size together**. Each rung has a
-realistic job. A model is promoted only when it performs that job; completing a
-token budget or reaching a low aggregate loss is not enough.
+Only a passed recipe may have a numbered rung directory. Candidate composes
+belong on an experiment branch or in a temporary workspace. A failed candidate
+is removed; its compose, telemetry, evaluation output, and decision remain in
+Git and the persisted model artifact.
 
-## Directory layout
+## Current ladder
 
-The top level contains this ladder plan and one directory for each promoted
-rung. Every rung directory contains:
-
-```text
-README.md       purpose, evidence, gates, and commands
-compose.yaml    immutable promoted training recipe
-compose_test.go guards for the rung's model and training contract
-evaluate.sh     fixed behavioral evaluation probes
-```
-
-Planned, failed, and sub-par candidates do not get rung directories. They stay
-on experiment branches or in temporary workspaces until they pass promotion.
-
-## What tokens per parameter means here
-
-Twenty training tokens per core parameter is a useful compute-allocation
-reference, not a universal definition of a trained model. It is enough for the
-narrow TinyStories rung because that distribution is simple and repetitive. It
-has not been enough for our broad factual models.
-
-Very small deployment models are commonly trained far beyond the classical
-compute-optimal point. For example, Hugging Face reports that SmolLM-135M was
-trained on 600B tokens: about 4,444 tokens per advertised parameter. The
-authors also report continued benchmark improvement beyond the Chinchilla
-point, with gains beginning to slow after roughly 400B tokens. That model is
-"overtrained" only in the narrow sense that a larger model could use the same
-training compute more efficiently. It is not necessarily overtrained for the
-goal of maximizing the capability of a fixed, inexpensive inference model.
-
-Reference: [Hugging Face, *SmolLM - blazingly fast and remarkably
-powerful*](https://huggingface.co/blog/smollm).
-
-WALDO therefore reports and reasons about all of these separately:
-
-- core parameters, excluding token input/output weights;
-- packed training-token exposure;
-- unique source tokens and effective corpus passes;
-- held-out loss and bits per UTF-8 byte (BPB); and
-- fixed behavioral capability gates.
-
-For a new general-language rung, the budget checkpoints are 20, 40, 80, and
-160 tokens per core parameter. The architecture, tokenizer, data, held-out
-partition, and probes remain fixed across those checkpoints. The first
-checkpoint that passes every gate may be promoted. Reaching 160 without
-passing triggers a data/capacity review; it does not justify blindly training
-to 4,444 tokens per parameter. SmolLM is evidence that tiny general models can
-need much more data, not a budget prescription for this ladder.
-
-## Promotion policy
-
-New candidates are trained and evaluated from a compose on an experiment
-branch or from a temporary path. A candidate is copied into this directory
-only after all of its gates pass. A failed or sub-par candidate is removed
-before the branch is merged; Git and persisted model artifacts retain its
-history.
-
-Promotion requires all of the following:
-
-1. finite training and held-out metrics;
-2. exact agreement between the selected, serialized, and reloaded artifact;
-3. the precommitted normalized-loss improvement;
-4. every rung-specific behavioral gate; and
-5. a written result with model ID, run ID, token exposure, effective corpus
-   passes, and evaluation evidence.
-
-The behavioral probes and their scoring rules are frozen before training.
-A lower aggregate loss alone is not a promotion.
-
-## How loss is optimized and compared
-
-Training directly minimizes next-token cross-entropy in nats per token. Raw
-token loss is comparable only when the tokenizer and held-out partition are
-identical. When tokenizers differ, this ladder compares bits per UTF-8 byte:
-
-```text
-BPB = held_out_loss / (held_out_bytes_per_token * ln(2))
-```
-
-Lower BPB means fewer bits are needed to predict the same held-out source
-text. It prevents a tokenizer that emits longer or shorter token sequences
-from appearing better merely because it changed the unit of measurement.
-
-The controlled optimization levers are:
-
-- **data:** quality, distribution, unique exposure, document boundaries, and
-  the held-out partition;
-- **tokenizer:** vocabulary size, fertility, effective byte context, and the
-  fraction of parameters consumed by embeddings;
-- **capacity:** core parameters, depth, width, attention, and MLP allocation;
-- **optimization:** learning rate, warmup, decay, batch geometry, weight decay,
-  regularization, and checkpoint selection; and
-- **budget:** source passes and tokens per core parameter.
-
-Within an experiment series, change one causal lever at a time. Compare exact
-held-out BPB and behavioral scores at matched token checkpoints. Generation
-quality, not a favorable training loss, decides promotion.
-
-## Ladder definition
-
-The first two rungs are passed references. Each promoted rung is a
-self-contained directory with its compose, tests, evaluator, and evidence.
-Later rungs are specifications, not promoted composes. Their directory enters
-this tree only after the model passes.
-
-| Rung | Target | Approximate core capacity | Required data | Budget policy | Minimum promotion capability | Status |
-| --- | --- | ---: | --- | --- | --- | --- |
-| [0001](0001-tiny-shakespeare/) | End-to-end systems control | 10M | Tiny Shakespeare | Fixed reference run | Locally plausible play continuation and correct checkpoint selection | Passed |
-| [0002](0002-tinystories-bpe/) | Narrow story language model | 30M | TinyStories reference | 20 core TPP | Retain entities and causality, avoid loops, terminate with EOS | Passed |
-| 0003 | Genetics and cell-biology foundation | 30-50M | PLOS Genetics, title-selected molecular-biology Wikimedia, and TinyStories retention data | 80 core TPP, then evidence review | Correct basic genetics and cell-biology continuations; retained stories; low repetition; reliable EOS | Candidate |
-| 0004 | Compact general foundation | 100-150M | Rung 0003 data plus broad high-quality educational, textbook, reference, math, and technical text | 20/40/80/160 core TPP checkpoints, then review | Correct basic factual answers, coherent paragraph explanations, basic technical knowledge, low repetition | Planned |
-| 0005 | Small assistant | Derived from passed 0004 | Curated supervised QA/instructions with an explicit interaction contract and assistant EOS | Short post-training stages with retention checks | Direct answers, instruction following, role isolation, EOS, and no material foundation regression | Planned |
-| 0006 | Elementary reasoning and technical assistant | 250-400M, justified by 0004 scaling evidence | Passed foundation mix plus licensed math, science, and code/technical data | Scaling prediction plus matched checkpoints | Multi-step elementary reasoning, basic code explanation, and retained general/assistant behavior | Planned |
-
-The ranges are decision boundaries, not invitations to sweep architectures.
-Each rung starts from the smallest architecture supported by evidence from the
-previous rung. Capacity grows only when more tokens stop producing useful
-capability improvement or the rung's task clearly exceeds the model's capacity.
-
-### Common generation gates
-
-Every language-capability rung uses a fixed deterministic suite and a fixed
-sampled suite. At minimum, promotion requires:
-
-- no obvious repetition loop in more than 1 of 10 deterministic probes;
-- at least 90% EOS termination in the long-horizon suite;
-- no prompt-role or document-boundary leakage;
-- no empty, malformed, or unrelated answer in more than 1 of 10 probes; and
-- no regression on the prior rung's retained-capability probes.
-
-Rung-specific correctness gates are defined with its candidate compose and
-evaluation fixture before the first training run. For rung 0003 the initial
-target is at least 8/10 relevant grammatical answers and 6/10 exact elementary
-facts or arithmetic answers. For rung 0004 it is at least 12/15 relevant
-answers and 8/10 exact basic factual answers. These targets may be revised only
-after a written capacity analysis, never merely because a run failed.
-
-## Data required to grow the ladder
-
-The next step is not another arbitrary mixture. Each addition must fill a
-declared capability gap and pass WALDO's provenance and redistribution policy.
-
-| Priority | Corpus or view | Rung | Purpose | Action |
+| Rung | Proven capability | Model | Evidence | Status |
 | --- | --- | --- | --- | --- |
-| 1 | PLOS Genetics view | 0003 | Grounded volume in one bounded scientific domain | Filter the existing journal metadata; do not duplicate shards |
-| 1 | Cell/genetics Wikimedia view | 0003 | Definitions and explanatory prose in the same domain | Filter existing wiki/title metadata using the frozen topic-title set |
-| 1 | Full TinyStories | 0003 | Preserve proven grammar, entity, causality, and EOS behavior | Ingest all source shards when available; current reference is explicitly a subset |
-| 2 | Open Textbook Library permissive subset | 0004 | Coherent instructional chapters across subjects | Ingest only books with compatible per-item licenses |
-| 2 | Existing PressBooks, LibreTexts, Wikimedia, and Stack-Edu views | 0004/0006 | Textbooks, reference knowledge, and technical language | Improve selection and metadata filters before adding volume |
-| 2 | DCLM-Edu high-score subset | 0004 | Web-scale educational language selected for small models | Complete source-level redistribution review before ingestion |
-| 2 | FineMath-4+ | 0006 | High-quality mathematical prose and problems | Complete source-level redistribution review before ingestion |
+| [0001](0001-tiny-shakespeare/) | End-to-end learning and checkpoint-selection control on one continuous literary distribution | 10.7M parameters, byte tokenizer | Plausible play continuation; best pre-overtraining checkpoint selected and reloaded exactly | Passed |
+| [0002](0002-tinystories-bpe/) | Narrow simple-story language model | 30.7M core parameters, 4K byte BPE | Entity/causal retention, bounded repetition, and 8/8 long-horizon EOS | Passed |
 
-Synthetic data may supplement a rung only when its generator, prompt, seed,
-license, and derivation are recorded. It must not replace independent held-out
-evaluation or dominate the mixture merely because it lowers loss.
+There is deliberately no rung 0003. A cell-biology candidate previously
+occupying that number failed every behavioral promotion gate and was removed.
 
-## Metadata filtering and reingestion
+## What the failed expansion proved
 
-Adding metadata filtering does **not automatically require reingestion**.
-Canonical shards already have a `meta` JSON column. If the original fetcher
-mapped the field we need into that column, WALDO can add record-level metadata
-predicates and reuse the existing immutable shards. Wikimedia and Cosmopedia
-already preserve useful namespace/title and audience/format metadata,
-respectively.
+The failed `cell-biology-30m-80tpp-01` run was numerically healthy: it consumed
+2.454B tokens, improved held-out loss from 8.4060 to 2.1062, selected and
+exactly reloaded its best checkpoint, and finished four-GPU training normally.
+It nevertheless produced approximately 1/10 correct factual continuations,
+failed the explanation and retained-story gates, entered repetition loops on
+nearly every factual probe, and emitted EOS on 0/10 long factual generations.
 
-Reingestion is required only when the necessary source metadata was never
-written into the canonical shard, or when the canonical text itself must
-change. Before any reingest:
+That result does **not** establish that WALDO's transformer implementation is
+broken. The same architecture family learns TinyStories, and independent
+numerical and memorization controls pass. It establishes that the proposed
+capability experiment was unsupported:
 
-1. inspect a sample of the existing shard's `meta` values;
-2. prove that the desired field is absent or unusable; and
-3. update the fetcher mapping and provenance contract.
+- a TinyStories-proven 30.7M-core architecture was assumed to support factual
+  domain acquisition without a matched public or internal baseline;
+- elementary textbook facts were evaluated after training mostly on research
+  articles, which optimize a different continuation distribution;
+- only 269.5M unique targets were replayed to fill 2.454B training tokens;
+- PLOS Genetics was repeated about 15.6 times and the small Wikimedia view
+  about 35.2 times; and
+- raw loss on the training distribution was treated as evidence for semantic
+  capability even though no such relationship had been calibrated.
 
-WALDO's current compose filters do not expose arbitrary `meta` predicates, so
-metadata-aware filtering is an implementation prerequisite for rung 0003. It
-should extend selection over existing shards; it should not create duplicate
-filtered corpora.
+The failure therefore rejects that experiment. It does not authorize another
+mixture, a larger token budget, or a larger model.
 
-## Candidate workflow
+## Why TinyStories succeeded and factual rungs did not
 
-For each next rung:
+TinyStories intentionally constrains vocabulary, syntax, subject matter, and
+document form. Its evaluation asks the model to continue the same distribution
+it learned. The TinyStories paper specifically demonstrates that very small
+models can become coherent under this simplified distribution; it does not
+claim that the same capacity can absorb broad or research-grade factual text.
 
-1. define the capability, frozen probes, gates, data prerequisites, and maximum
-   review budget;
-2. add or select only the corpora required for that capability;
-3. freeze the architecture, tokenizer, mixture, held-out partition, and seed;
-4. train and score matched 20/40/80/160-core-TPP checkpoints without changing
-   those controls;
-5. diagnose failure as data, optimization, exposure, or capacity using the
-   loss curve and per-probe results; and
-6. add the successful rung directory with `README.md`, `compose.yaml`,
-   `compose_test.go`, and `evaluate.sh` only after every gate passes.
+Chinchilla's often-quoted token/parameter relationship is a compute-allocation
+result, not a capability threshold. Conversely, very high token/parameter
+ratios do not create capability when a small unique corpus is replayed many
+times. Work on data-constrained scaling finds that repeated data remains useful
+for a limited number of epochs, after which the value of more compute decays.
+The failed cell-biology run exceeded that evidence for its smallest views.
 
-The immediate work is rung 0003: validate the preflight size and exposure of
-the PLOS Genetics and title-selected molecular-biology Wikimedia views, then
-train the fixed 30M candidate against the frozen single-domain evaluation
-fixture.
+References:
+
+- [TinyStories](https://arxiv.org/abs/2305.07759)
+- [Training Compute-Optimal Large Language Models](https://arxiv.org/abs/2203.15556)
+- [Scaling Data-Constrained Language Models](https://arxiv.org/abs/2305.16264)
+- [BabyLM](https://arxiv.org/abs/2301.11796)
+
+## Hard stop before rung 0003
+
+No new foundation or domain compose may be added or trained until all of the
+following exist:
+
+1. **A declared track.** The proposal is explicitly trainer validation,
+   research, a from-scratch foundation model, or product post-training.
+2. **A quantitative evaluator.** The report uses immutable evaluation data,
+   low-variance log-likelihood or multiple-choice metrics, automatic EOS and
+   repetition diagnostics, and confidence intervals where applicable. Raw
+   generations are supporting diagnostics, not the primary score.
+3. **Independent baselines.** The same evaluator is run on an untrained model,
+   the previous WALDO rung, and at least one public model at comparable size
+   and exposure. A proposed threshold must be attainable by an identified
+   baseline.
+4. **A data-support report.** Before training, the exact derived view reports
+   unique tokens, effective source passes, duplicates, artifacts, tokenizer
+   fertility, evaluation overlap, and direct support for every demanded
+   capability.
+5. **A scaling pilot.** Existing checkpoints or a deliberately tiny run show
+   that the chosen metric improves with exposure or capacity. The pilot changes
+   one causal variable and has a written early-stop rule.
+6. **A bounded qualification run.** Architecture, tokenizer, data, optimizer,
+   evaluator, seed, checkpoints, maximum budget, and promotion gate are frozen.
+   Failure ends the candidate; it does not trigger an improvised extension.
+
+Until these prerequisites pass, the correct next task is measurement and
+baseline implementation—not training.
+
+## Required evidence packet
+
+Every proposed rung must have a reviewable packet before its compose is
+eligible to run:
+
+```text
+track and intended use
+one falsifiable hypothesis
+parent or public baseline
+one changed variable
+immutable data and tokenizer identities
+data-support and contamination report
+evaluation BOM and scoring implementation
+expected metric range with supporting evidence
+pilot budget and early-stop rule
+maximum qualification budget
+promotion and rejection thresholds
+```
+
+Claims such as "30M should know elementary biology" or "80 tokens per
+parameter should be enough" are not evidence and cannot populate this packet.
+
+## Parameter and loss accounting
+
+WALDO reports core parameters separately from token input/output weights.
+Training exposure, unique source exposure, and effective source passes are
+separate quantities. A tokens-per-parameter ratio is descriptive; it is never
+a promotion criterion by itself.
+
+Raw token loss is comparable only with the same tokenizer and held-out bytes.
+When tokenizers differ, use exact bits per UTF-8 byte:
+
+```text
+BPB = held_out_nll_sum / (held_out_utf8_bytes * ln(2))
+```
+
+BPB measures distribution fit, not factual correctness, reasoning, stopping,
+or usefulness. Every capability claim requires an external task metric.
+
+## Architecture policy
+
+The current evidence neither convicts nor validates the 30.7M-core architecture
+for factual language modeling. It is validated only for the TinyStories rung.
+Architecture changes must therefore be comparative experiments at fixed data,
+tokenizer, FLOPs, optimizer, and evaluation—not guesses based on parameter
+count alone.
+
+Depth, width, attention layout, vocabulary allocation, context, batch size,
+learning rate, weight decay, clipping, and packing are all controlled variables.
+At least two matched configurations and multiple seeds are required before an
+architecture decision is promoted.
+
+## Next authorized work
+
+The next work is the validation backlog in
+[`docs/TRAINING-ROBUSTNESS-PLAN.md`](../docs/TRAINING-ROBUSTNESS-PLAN.md):
+
+1. finish fixed-global-batch one/two/four-GPU and resume equivalence;
+2. implement a versioned log-likelihood evaluation report;
+3. evaluate matched public small-model checkpoints with that report;
+4. build corpus-support, duplication, artifact, and overlap reports; and
+5. use existing WALDO artifacts to test whether any metric has a defensible
+   scaling trend before proposing another run.
+
+Only after those measurements support a bounded capability may a candidate
+rung 0003 be designed. Only after that candidate passes every frozen gate may
+its directory enter this ladder.
+
+## Rung directory contract
+
+Each promoted rung contains:
+
+```text
+README.md       purpose, immutable evidence, gates, and commands
+compose.yaml    exact promoted training recipe
+compose_test.go guards for architecture, data, and training contract
+evaluate.sh     fixed behavioral diagnostics
+```
+
+The authoritative project-wide validation sequence is documented in
+[`docs/TRAINING-ROBUSTNESS-PLAN.md`](../docs/TRAINING-ROBUSTNESS-PLAN.md).

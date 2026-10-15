@@ -1,9 +1,10 @@
 # Training validation and capability plan
 
 This is the authoritative plan for WALDO language-model training. It replaces
-the experimental compose ladders as the source of project direction. Existing
-composes remain reproducible evidence, but no larger foundation run is
-authorized until the validation gates below pass.
+the experimental compose ladders as the source of project direction. The
+current compose tree contains only promoted controls; failed candidates remain
+recoverable from Git and persisted model artifacts. No larger foundation run
+is authorized until the validation gates below pass.
 
 The immediate decision is **stop scaling the current ladder**. The evidence
 does not show that another corpus-weight change or a larger model will resolve
@@ -36,18 +37,21 @@ correctness or capability.
 
 ### What is not established
 
-WALDO does not yet have an independent known-answer test for model logits,
-causal loss, gradients, an AdamW update, or a complete learning curve. Most
-worker tests verify source invariants; normal Go end-to-end tests use a fake
-worker. The real PyTorch worker has substantial integrity checking, but it is
-checking itself. A shared implementation eliminates train/inference drift; it
-does not prove that the shared math is correct.
+Independent known-answer tests now cover logits, causal loss, gradients, one
+AdamW update, save/reload parity, and a real-worker memorization curve. The
+TinyStories single-host and two-host runs also agree closely. Exact
+fixed-global-batch one/two/four-GPU equivalence and interrupted/resumed
+equivalence remain unfinished, so distributed execution is strongly supported
+but not yet a complete numerical oracle.
 
-The project also lacks a stable quantitative evaluation baseline. Aggregate
-held-out loss, fifteen hand-scored continuations, one seed, and changing prompt
-sets cannot distinguish implementation error, undertraining, architecture,
-tokenizer, or data quality. Losses from different tokenizers and domain mixes
-are not directly comparable.
+The main blocker is evaluation and experimental calibration. The project lacks
+a versioned quantitative capability report with public small-model baselines,
+confidence intervals, contamination checks, and stable low-variance tasks.
+Aggregate held-out loss and hand-scored continuations cannot distinguish an
+unreasonable capability target from insufficient capacity, unsuitable data,
+or a weak recipe. Losses from different tokenizers and domain mixes are not
+directly comparable without BPB, and BPB still measures fit rather than
+capability.
 
 ### What the experiments actually show
 
@@ -59,6 +63,7 @@ are not directly comparable.
 | assistant EOS SFT | 76.6M base plus 10M tokens | EOS rose to 7--8/10; answers became canned | stopping can be taught; SFT cannot repair a weak foundation |
 | Cosmopedia proxy | 8.6M/10M, 8.6M/500M, 32.3M/1B | loss reached 2.1102; long generations still drifted and repeated | Cosmopedia is not TinyStories and the proxy did not validate the TinyStories result |
 | general mixture | 32.3M, 1B | loss 2.9481; 2/15 EOS and 13/15 max-token terminations | the 55/25/15/5 mixture failed its behavioral gate and exposed source artifacts |
+| cell-biology candidate | 32.8M, 2.454B, 80 core TPP | loss reached 2.1062, but facts were about 1/10, long factual EOS was 0/10, and repetition was pervasive | numerically healthy training cannot rescue a task/data mismatch; 15.6 PLOS passes and 35.2 Wikimedia-view passes were not evidence for the demanded capability |
 
 The general-mixture run consumed the requested shares accurately: 55.01%
 Wikimedia, 25.00% Stack Exchange, 15.00% PLOS, and 4.99% PressBooks. The
@@ -66,6 +71,15 @@ sampler therefore did what the compose requested. Its outputs included a
 Stack Exchange username, repeated PLOS boilerplate, a PLOS table DOI, and
 recurring source-like templates. That is evidence against the selected data
 view and gate, not evidence for another arbitrary mixture.
+
+The later cell-biology candidate sharpened this conclusion. Its sampler also
+matched the requested 70/20/10 mixture, its artifact boundary was exact, and
+its held-out curve was healthy. The failure therefore cannot be dismissed as a
+weight-accounting or checkpoint defect. The candidate asked a TinyStories-sized
+model for elementary factual completion after exposing it primarily to
+research-paper continuations, with the smallest source view replayed more than
+thirty-five times. That was an unsupported experiment design, not a rung that
+merely needed more tokens.
 
 The loss curves fell smoothly and persisted correctly. This makes a grossly
 broken run less likely, but it cannot rule out a subtle model, optimizer,
