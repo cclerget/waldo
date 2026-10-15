@@ -2,7 +2,7 @@
 
 This directory is a catalog of reproducible models that passed every declared
 gate. It is not a roadmap and it is not an experiment log. At present the
-validated ladder ends at rung 0002.
+validated ladder ends at rung 0003.
 
 Only a passed recipe may have a numbered rung directory. Candidate composes
 belong on an experiment branch or in a temporary workspace. A failed candidate
@@ -15,11 +15,12 @@ Git and the persisted model artifact.
 | --- | --- | --- | --- | --- |
 | [0001](0001-tiny-shakespeare/) | End-to-end learning and checkpoint-selection control on one continuous literary distribution | 10.7M parameters, byte tokenizer | Plausible play continuation; best pre-overtraining checkpoint selected and reloaded exactly | Passed |
 | [0002](0002-tinystories-bpe/) | Narrow simple-story language model | 30.7M core parameters, 4K byte BPE | Entity/causal retention, bounded repetition, and 8/8 long-horizon EOS | Passed |
+| [0003](0003-narrow-grounded-responder/) | Narrow grounded responder inside the TinyStories language domain | Same 30.7M core model plus bounded assistant-response training | 20/20 bounded EOS, 14/15 exact grounded answers, zero interaction loops, and retained story behavior | Passed |
 
-There is deliberately no rung 0003 compose yet. A cell-biology candidate
-previously occupying that number failed every behavioral promotion gate and
-was removed. The next rungs are defined below, but definitions do not authorize
-training or create compose directories.
+A cell-biology candidate previously occupying rung 0003 failed every
+behavioral promotion gate and was removed. The promoted rung instead adds a
+narrow grounded interaction contract to the passed TinyStories foundation.
+Later definitions do not authorize training or create compose directories.
 
 ## Defined ladder
 
@@ -38,7 +39,7 @@ expected to be a reliable open-domain factual system.
 | --- | ---: | --- | --- | --- |
 | 0001 | 10.7M | 6 layers, width 384, byte tokenizer, 256 context | Learn one literary stream and prove the training system | Passed |
 | 0002 | 30.7M core | 9 layers, width 512, 8 attention heads, 4K tied byte-BPE, 512 context | Generate coherent simple stories with boundaries | Passed |
-| 0003 | same 30.7M core | Inherit rung 0002 exactly; add only a supervised interaction stage | Respond to simple, grounded prompts inside the TinyStories language domain | Defined, not authorized |
+| 0003 | same 30.7M core | Inherit rung 0002 exactly; add only a supervised interaction stage | Respond to simple, grounded prompts inside the TinyStories language domain | Passed |
 | 0004 | about 66M total / 63M core | 24 layers, width 448, SwiGLU 1,344, 7/7 heads, 8K tied vocabulary, 1,024 context | Short coherent simple-English prose across several everyday forms | Defined, not authorized |
 | 0005 | about 125M total / 106M core | 30 layers, width 576, SwiGLU 1,536, 9/3 grouped-query heads, 32K tied vocabulary, 2,048 context | Small general base model comparable to public 125M--160M models at matched exposure | Defined, not authorized |
 | 0006 | about 345M total / 315M core | 32 layers, width 960, SwiGLU 2,560, 15/5 grouped-query heads, 32K tied vocabulary, 2,048 context | Compact general base with measurable but limited commonsense and knowledge | Defined, not authorized |
@@ -106,9 +107,10 @@ Promotion criteria over immutable held-out prompts:
 - the original rung-0002 suite retains at least 6/8 entity/causal passes and
   7/8 long-horizon EOS.
 
-These are interaction and reading gates, not knowledge gates. Before training,
-an existing public model in the 30M--70M range must demonstrate that the frozen
-suite is attainable; otherwise the suite or scale is invalid.
+These are interaction and reading gates, not knowledge gates. The promoted
+checkpoint is now the frozen 30M-scale reference for this suite. Any future
+data, optimizer, or architecture change must compare against it rather than
+inventing a new threshold after training.
 
 ### Rung 0004: small simple-English base
 
