@@ -16,8 +16,216 @@ Git and the persisted model artifact.
 | [0001](0001-tiny-shakespeare/) | End-to-end learning and checkpoint-selection control on one continuous literary distribution | 10.7M parameters, byte tokenizer | Plausible play continuation; best pre-overtraining checkpoint selected and reloaded exactly | Passed |
 | [0002](0002-tinystories-bpe/) | Narrow simple-story language model | 30.7M core parameters, 4K byte BPE | Entity/causal retention, bounded repetition, and 8/8 long-horizon EOS | Passed |
 
-There is deliberately no rung 0003. A cell-biology candidate previously
-occupying that number failed every behavioral promotion gate and was removed.
+There is deliberately no rung 0003 compose yet. A cell-biology candidate
+previously occupying that number failed every behavioral promotion gate and
+was removed. The next rungs are defined below, but definitions do not authorize
+training or create compose directories.
+
+## Defined ladder
+
+The ladder separates four different abilities:
+
+1. learning a text distribution;
+2. producing coherent language inside a constrained distribution;
+3. following a narrow interaction contract; and
+4. acquiring increasingly broad language and knowledge.
+
+A rung never claims the abilities of a later rung. In particular, a raw base
+model is not graded as an assistant, and a model below 500M parameters is not
+expected to be a reliable open-domain factual system.
+
+| Rung | Scale | Architecture | Honest target | Status |
+| --- | ---: | --- | --- | --- |
+| 0001 | 10.7M | 6 layers, width 384, byte tokenizer, 256 context | Learn one literary stream and prove the training system | Passed |
+| 0002 | 30.7M core | 9 layers, width 512, 8 attention heads, 4K tied byte-BPE, 512 context | Generate coherent simple stories with boundaries | Passed |
+| 0003 | same 30.7M core | Inherit rung 0002 exactly; add only a supervised interaction stage | Respond to simple, grounded prompts inside the TinyStories language domain | Defined, not authorized |
+| 0004 | about 66M total / 63M core | 24 layers, width 448, SwiGLU 1,344, 7/7 heads, 8K tied vocabulary, 1,024 context | Short coherent simple-English prose across several everyday forms | Defined, not authorized |
+| 0005 | about 125M total / 106M core | 30 layers, width 576, SwiGLU 1,536, 9/3 grouped-query heads, 32K tied vocabulary, 2,048 context | Small general base model comparable to public 125M--160M models at matched exposure | Defined, not authorized |
+| 0006 | about 345M total / 315M core | 32 layers, width 960, SwiGLU 2,560, 15/5 grouped-query heads, 32K tied vocabulary, 2,048 context | Compact general base with measurable but limited commonsense and knowledge | Defined, not authorized |
+| 0007 | inherit passed 0006 | No architecture change; supervised post-training only | Constrained assistant for extraction, classification, rewriting, and grounded QA | Defined, not authorized |
+
+The 125M and 350M designs follow the deep-and-thin, tied-embedding, grouped-
+query direction validated by MobileLLM at these scales. The 66M design is an
+intermediate research bridge, not a claimed industry-standard optimum. It must
+win a fixed-data comparison before it can become a compose.
+
+### Rung 0001: systems learning control
+
+Purpose: prove ingestion, byte tokenization, causal training, checkpoint
+selection, serialization, reload, and recognizable local generation.
+
+Promotion criteria:
+
+- finite loss and exact selected-artifact reload;
+- at least 50% held-out-loss improvement;
+- selected checkpoint may precede the final step when later training degrades;
+- 6/8 sampled continuations preserve play dialogue and character formatting;
+- no requirement for EOS, factual answers, instruction following, or general
+  English.
+
+This rung is passed. Its criteria intentionally describe a systems control,
+not a useful language model.
+
+### Rung 0002: narrow simple-story base
+
+Purpose: prove that a roughly 30M-core model can learn coherent English inside
+one intentionally simple distribution.
+
+Promotion criteria:
+
+- finite metrics, exact reload, and held-out BPB no worse than 0.52;
+- 7/8 sampled prompts retain the named people or objects and the prompt's main
+  causal direction through the first 150 generated tokens;
+- no sampled continuation and no more than one greedy continuation enters an
+  obvious immediate repetition loop; and
+- 8/8 sampled long-horizon generations emit EOS.
+
+This rung is passed. It proves simple-story generation only. It does not prove
+question answering, factual recall, broad knowledge, or assistant behavior.
+
+### Rung 0003: narrow grounded responder
+
+Purpose: test the user's reasonable expectation for a 30M model: it can barely
+understand a simple request, produce a relevant response, and stop. This is
+post-training of rung 0002, not a new foundation model.
+
+The prompt must contain every fact needed to answer. Allowed tasks are simple
+story questions, extraction, yes/no classification, and one-step rewriting in
+the TinyStories vocabulary. Open-domain facts, arithmetic reasoning, coding,
+and multi-step instructions are explicitly out of scope.
+
+Promotion criteria over immutable held-out prompts:
+
+- 18/20 responses obey the user/assistant boundary and emit EOS within 128
+  generated tokens;
+- 14/20 begin with a relevant answer rather than continuing or restating the
+  prompt;
+- 12/15 grounded questions return the answer explicitly present in the supplied
+  text;
+- no more than 1/20 responses enters a phrase or sentence loop; and
+- the original rung-0002 suite retains at least 6/8 entity/causal passes and
+  7/8 long-horizon EOS.
+
+These are interaction and reading gates, not knowledge gates. Before training,
+an existing public model in the 30M--70M range must demonstrate that the frozen
+suite is attainable; otherwise the suite or scale is invalid.
+
+### Rung 0004: small simple-English base
+
+Purpose: expand from one story form to several constrained forms: short
+narratives, descriptions, simple dialogue, and elementary explanatory prose.
+It remains a base model and is not expected to answer questions on command.
+
+Architecture target: approximately 66M total and 63M core parameters, 24
+decoder layers, width 448, SwiGLU intermediate size 1,344, seven full attention
+heads, tied 8K embeddings, RoPE, RMSNorm, and 1,024-token context. Full
+attention is retained at this bridge scale to avoid introducing grouped-query
+attention and capacity growth in the same experiment.
+
+Before this architecture is accepted, a small matched-FLOP pilot must compare
+it with a conventional 12-layer, width-640, SwiGLU-1,728, 10-head control using
+the same tokenizer, data order, optimizer, and evaluator. The deep design wins
+only if its BPB and task score improve beyond uncertainty; otherwise the
+control architecture becomes the target. This is the one architecture decision
+that lacks a directly comparable published checkpoint.
+
+Promotion criteria:
+
+- beat rung 0002 and an untrained control on the frozen simple-English
+  log-likelihood suite, with non-overlapping bootstrap confidence intervals;
+- 14/20 sampled continuations remain grammatical and on topic for two complete
+  sentences;
+- 12/20 retain every named entity and the principal causal relation;
+- at least 85% emit EOS within the corpus-calibrated horizon;
+- no more than 2/20 sampled or 3/20 greedy outputs enter repetition loops; and
+- no factual-accuracy or assistant-response requirement.
+
+Training may expose at most four effective passes over any source view. Budget
+checkpoints are 5, 10, and at most 20 core TPP. Continue to the next checkpoint
+only when both held-out BPB and the frozen task score improve beyond their
+uncertainty interval.
+
+### Rung 0005: 125M general-language base
+
+Purpose: establish an honest small general base model—not a capable assistant.
+Published 125M--160M models show grammatical language and modest commonsense
+signals but remain weak on broad knowledge and reasoning.
+
+Architecture target: the MobileLLM-125M shape supported by WALDO's model
+contract—30 layers, width 576, SwiGLU intermediate size 1,536, nine query heads,
+three key/value heads, tied 32K embeddings, RoPE, RMSNorm, and 2,048 context.
+WALDO's parameter formula estimates 124.6M total and 106.2M non-embedding
+parameters.
+
+Promotion criteria:
+
+- at matched training tokens, reach at least 90% of the normalized score of a
+  public 125M--160M baseline on the same pinned language-modeling, LAMBADA,
+  PIQA, SciQ, and ARC-Easy evaluator;
+- exceed random or majority baselines on at least four of those five tasks with
+  bootstrap confidence;
+- 16/20 sampled prose continuations are grammatical and remain on topic for
+  two sentences;
+- at least 80% emit EOS and no more than 2/20 enter an obvious loop; and
+- no open-domain short-answer, chat, coding, or multi-step reasoning gate.
+
+The public comparison must use a checkpoint with comparable token exposure;
+comparing a short WALDO run with a public model trained on hundreds of billions
+of tokens is invalid. Qualification begins at 5 core TPP and may advance to 10
+and 20 only when the scaling slope remains favorable. No source view may exceed
+four effective passes.
+
+For each task, chance-normalized score is `(model - chance) / (public -
+chance)`. The rung gate uses the mean across the declared tasks. This prevents
+near-chance accuracy from looking competitive merely because both percentages
+are numerically close.
+
+### Rung 0006: 350M compact general base
+
+Purpose: demonstrate measurable general-language and commonsense improvement
+while remaining explicit that a 350M base model is not reliably knowledgeable.
+
+Architecture target: the MobileLLM-350M scale—32 layers, width 960, SwiGLU
+intermediate size 2,560, 15 query heads, five key/value heads, tied 32K
+embeddings, RoPE, RMSNorm, and 2,048 context. WALDO's parameter formula
+estimates 345.4M total and 314.6M non-embedding parameters.
+
+Promotion criteria:
+
+- at matched exposure, reach at least 90% of a public 350M--410M baseline's
+  normalized score on the identical evaluator;
+- materially outperform the passed rung 0005 on aggregate BPB and at least
+  three of LAMBADA, PIQA, SciQ, ARC-Easy, and HellaSwag;
+- 18/20 sampled continuations remain grammatical and on topic for one
+  paragraph;
+- at least 90% emit EOS and no more than 1/20 sampled outputs loops; and
+- factual answers are reported diagnostically but are not a promotion gate.
+
+The same 5/10/20-core-TPP checkpoint and four-effective-pass limits apply.
+Beyond 20 TPP requires a new evidence review, not an automatic extension.
+
+### Rung 0007: constrained compact assistant
+
+Purpose: post-train a passed rung 0006 for tasks that a sub-billion model can
+reasonably perform when the answer is in the prompt or the output space is
+bounded. The foundation architecture and tokenizer do not change.
+
+Allowed tasks are extraction, classification, structured formatting, short
+rewriting, summarization of supplied text, and grounded question answering.
+Open-domain expertise, dependable coding, and multi-step mathematical reasoning
+remain out of scope.
+
+Promotion criteria:
+
+- at least 90% interaction-contract and EOS compliance;
+- at least 80% exact accuracy on extraction and bounded classification;
+- at least 75% grounded-QA accuracy when the answer is explicit in the prompt;
+- at least 80% schema validity on constrained JSON outputs;
+- no more than 1/20 repetition loops or role-boundary leaks; and
+- no statistically material regression on the rung-0006 foundation suite.
+
+No assistant rung can be proposed until its base rung passes. Post-training is
+not permitted to conceal a failed foundation model.
 
 ## What the failed expansion proved
 
@@ -68,10 +276,10 @@ References:
 - [Scaling Data-Constrained Language Models](https://arxiv.org/abs/2305.16264)
 - [BabyLM](https://arxiv.org/abs/2301.11796)
 
-## Hard stop before rung 0003
+## Hard stop before a rung 0003 compose
 
-No new foundation or domain compose may be added or trained until all of the
-following exist:
+No new candidate compose—foundation, domain, or post-training—may be added or
+trained until all of the following exist:
 
 1. **A declared track.** The proposal is explicitly trainer validation,
    research, a from-scratch foundation model, or product post-training.
@@ -161,9 +369,9 @@ The next work is the validation backlog in
 5. use existing WALDO artifacts to test whether any metric has a defensible
    scaling trend before proposing another run.
 
-Only after those measurements support a bounded capability may a candidate
-rung 0003 be designed. Only after that candidate passes every frozen gate may
-its directory enter this ladder.
+Only after those measurements support the bounded capability defined above may
+a candidate rung 0003 compose be created. Only after that candidate passes
+every frozen gate may its directory enter this ladder.
 
 ## Rung directory contract
 

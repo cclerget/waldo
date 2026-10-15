@@ -373,14 +373,19 @@ the ranking survives at the next model size.
 #### From-scratch research track
 
 After all earlier gates, use a validated 125M--160M architecture and high-quality
-data view. Treat 2.5B and 5B as early checkpoints, not final capability budgets.
-A defensible first qualification horizon is approximately 10B--15B tokens
-(about 80--120 tokens per parameter), with quantitative gates at 1B, 2.5B, 5B,
-10B, and 15B. Stop when projected improvement cannot justify the next interval.
+data view. The first qualification is deliberately modest: checkpoints at 5,
+10, and at most 20 core tokens per parameter, with no source view repeated more
+than four effective passes. Advance only when BPB and the frozen quantitative
+task report improve beyond uncertainty and the matched public checkpoint shows
+that the target is attainable at the same exposure.
 
-This is still much less exposure than Pythia or SmolLM and should be described
-as an economical research baseline, not state of the art. Any claim of a
-useful general model must come from the evaluation suite, not the ratio.
+Twenty TPP is a review boundary, not a claim that training is complete. Longer
+training may eventually be justified for a fixed deployment model, but only by
+an observed scaling curve, sufficient unique data, and a new approved budget.
+Pythia and SmolLM demonstrate that much longer training can benefit small
+models; they do not justify spending 10B--600B tokens before WALDO has matched
+their early-checkpoint behavior. Any claim of a useful general model must come
+from the evaluation suite, not a token ratio.
 
 #### Product track
 
