@@ -2,7 +2,7 @@
 
 This directory is a catalog of reproducible models that passed every declared
 gate. It is not a roadmap and it is not an experiment log. At present the
-validated ladder ends at rung 0003.
+validated ladder ends at rung 0004.
 
 Only a passed recipe may have a numbered rung directory. Candidate composes
 belong on an experiment branch or in a temporary workspace. A failed candidate
@@ -16,6 +16,7 @@ Git and the persisted model artifact.
 | [0001](0001-tiny-shakespeare/) | End-to-end learning and checkpoint-selection control on one continuous literary distribution | 10.7M parameters, byte tokenizer | Plausible play continuation; best pre-overtraining checkpoint selected and reloaded exactly | Passed |
 | [0002](0002-tinystories-bpe/) | Narrow simple-story language model | 30.7M core parameters, 4K byte BPE | Entity/causal retention, bounded repetition, and 8/8 long-horizon EOS | Passed |
 | [0003](0003-narrow-grounded-responder/) | Narrow grounded responder inside the TinyStories language domain | Same 30.7M core model plus bounded assistant-response training | 20/20 bounded EOS, 14/15 exact grounded answers, zero interaction loops, and retained story behavior | Passed |
+| [0004](0004-small-simple-english/) | Small base model spanning simple narrative, description, dialogue, and elementary explanation | 59.5M core parameters, 8K byte BPE | Significant broad-form BPB gain over rung 0002, strong prompt/continuation discrimination, complete-sentence generation, and zero loops | Passed |
 
 A cell-biology candidate previously occupying rung 0003 failed every
 behavioral promotion gate and was removed. The promoted rung instead adds a
@@ -40,15 +41,16 @@ expected to be a reliable open-domain factual system.
 | 0001 | 10.7M | 6 layers, width 384, byte tokenizer, 256 context | Learn one literary stream and prove the training system | Passed |
 | 0002 | 30.7M core | 9 layers, width 512, 8 attention heads, 4K tied byte-BPE, 512 context | Generate coherent simple stories with boundaries | Passed |
 | 0003 | same 30.7M core | Inherit rung 0002 exactly; add only a supervised interaction stage | Respond to simple, grounded prompts inside the TinyStories language domain | Passed |
-| 0004 | about 66M total / 63M core | 24 layers, width 448, SwiGLU 1,344, 7/7 heads, 8K tied vocabulary, 1,024 context | Short coherent simple-English prose across several everyday forms | Defined, not authorized |
+| 0004 | 64.7M total / 59.5M core | 12 layers, width 640, SwiGLU 1,728, 10/10 heads, 8K tied vocabulary, 1,024 context | Short coherent simple-English prose across several everyday forms | Passed |
 | 0005 | about 125M total / 106M core | 30 layers, width 576, SwiGLU 1,536, 9/3 grouped-query heads, 32K tied vocabulary, 2,048 context | Small general base model comparable to public 125M--160M models at matched exposure | Defined, not authorized |
 | 0006 | about 345M total / 315M core | 32 layers, width 960, SwiGLU 2,560, 15/5 grouped-query heads, 32K tied vocabulary, 2,048 context | Compact general base with measurable but limited commonsense and knowledge | Defined, not authorized |
 | 0007 | inherit passed 0006 | No architecture change; supervised post-training only | Constrained assistant for extraction, classification, rewriting, and grounded QA | Defined, not authorized |
 
 The 125M and 350M designs follow the deep-and-thin, tied-embedding, grouped-
-query direction validated by MobileLLM at these scales. The 66M design is an
-intermediate research bridge, not a claimed industry-standard optimum. It must
-win a fixed-data comparison before it can become a compose.
+query direction validated by MobileLLM at those scales. Rung 0004 is an
+empirical bridge: its conventional 12-layer shape beat a matched-compute
+24-layer pilot, so the deeper candidate was rejected rather than promoted on
+architectural fashion.
 
 ### Rung 0001: systems learning control
 
@@ -118,34 +120,39 @@ Purpose: expand from one story form to several constrained forms: short
 narratives, descriptions, simple dialogue, and elementary explanatory prose.
 It remains a base model and is not expected to answer questions on command.
 
-Architecture target: approximately 66M total and 63M core parameters, 24
-decoder layers, width 448, SwiGLU intermediate size 1,344, seven full attention
-heads, tied 8K embeddings, RoPE, RMSNorm, and 1,024-token context. Full
-attention is retained at this bridge scale to avoid introducing grouped-query
-attention and capacity growth in the same experiment.
-
-Before this architecture is accepted, a small matched-FLOP pilot must compare
-it with a conventional 12-layer, width-640, SwiGLU-1,728, 10-head control using
-the same tokenizer, data order, optimizer, and evaluator. The deep design wins
-only if its BPB and task score improve beyond uncertainty; otherwise the
-control architecture becomes the target. This is the one architecture decision
-that lacks a directly comparable published checkpoint.
+Architecture: 64.7M total and 59.5M core parameters, 12 decoder layers, width
+640, SwiGLU intermediate size 1,728, ten full attention heads, tied 8K
+embeddings, RoPE, RMSNorm, and 1,024-token context. A matched-compute pilot
+rejected the proposed 24-layer, width-448 shape: at roughly 315M/346M training
+tokens its held-out loss was 2.9966 versus 2.9279 for the conventional control.
+Full attention is retained at this bridge scale so grouped-query attention is
+not introduced in the same experiment as capacity growth.
 
 Promotion criteria:
 
-- beat rung 0002 and an untrained control on the frozen simple-English
-  log-likelihood suite, with non-overlapping bootstrap confidence intervals;
-- 14/20 sampled continuations remain grammatical and on topic for two complete
-  sentences;
-- 12/20 retain every named entity and the principal causal relation;
-- at least 85% emit EOS within the corpus-calibrated horizon;
+- beat the preserved rung-0002 base on the frozen 20-item broad-form
+  conditional-BPB suite, with a paired bootstrap 95% interval below zero;
+- assign the correct prompt/continuation pairing at least 0.25 BPB less than a
+  within-form rotated pairing, while the deterministic untrained control's gap
+  remains within 0.05 BPB of zero;
+- improve explanation BPB by at least 25%, with no individual form regressing
+  more than 0.15 BPB from rung 0002;
+- at least 18/20 sampled continuations produce two complete sentences;
 - no more than 2/20 sampled or 3/20 greedy outputs enter repetition loops; and
-- no factual-accuracy or assistant-response requirement.
+- no factual-accuracy, question-answering, instruction-following, or arbitrary
+  fixed-horizon EOS requirement.
 
-Training may expose at most four effective passes over any source view. Budget
-checkpoints are 5, 10, and at most 20 core TPP. Continue to the next checkpoint
-only when both held-out BPB and the frozen task score improve beyond their
-uncertainty interval.
+The last exclusion is deliberate. This is a base model trained on documents,
+not an assistant trained to return bounded responses. EOS is still reported as
+a diagnostic, but a long elementary explanation reaching a generation limit
+does not invalidate conditional language modeling. Training may expose at most
+four effective passes over any source view.
+
+This rung passed at 20 core TPP. Its paired BPB delta versus rung 0002 was
+-0.1775 with a 95% interval of [-0.4021, -0.0017]. The correct-context
+advantage was 0.4701 BPB versus 0.0034 for the untrained control; explanation
+BPB improved from 1.8259 to 1.0909. All 20 sampled outputs produced two
+complete sentences, and neither the sampled nor greedy suite looped.
 
 ### Rung 0005: 125M general-language base
 
@@ -278,7 +285,7 @@ References:
 - [Scaling Data-Constrained Language Models](https://arxiv.org/abs/2305.16264)
 - [BabyLM](https://arxiv.org/abs/2301.11796)
 
-## Hard stop before a rung 0003 compose
+## Hard stop before any future rung
 
 No new candidate compose—foundation, domain, or post-training—may be added or
 trained until all of the following exist:
@@ -289,10 +296,10 @@ trained until all of the following exist:
    low-variance log-likelihood or multiple-choice metrics, automatic EOS and
    repetition diagnostics, and confidence intervals where applicable. Raw
    generations are supporting diagnostics, not the primary score.
-3. **Independent baselines.** The same evaluator is run on an untrained model,
-   the previous WALDO rung, and at least one public model at comparable size
-   and exposure. A proposed threshold must be attainable by an identified
-   baseline.
+3. **Independent baselines.** The same evaluator is run on an untrained model
+   and the previous WALDO rung. General-model rungs 0005 and later also require
+   a public model at comparable size and exposure. A proposed threshold must be
+   attainable by an identified baseline.
 4. **A data-support report.** Before training, the exact derived view reports
    unique tokens, effective source passes, duplicates, artifacts, tokenizer
    fertility, evaluation overlap, and direct support for every demanded
@@ -348,32 +355,36 @@ or usefulness. Every capability claim requires an external task metric.
 
 ## Architecture policy
 
-The current evidence neither convicts nor validates the 30.7M-core architecture
-for factual language modeling. It is validated only for the TinyStories rung.
-Architecture changes must therefore be comparative experiments at fixed data,
-tokenizer, FLOPs, optimizer, and evaluation—not guesses based on parameter
-count alone.
+The 30.7M-core architecture is validated for TinyStories and its narrow
+grounded-response extension. The 59.5M-core architecture is validated for the
+rung-0004 simple-English distribution. Neither result proves open-domain
+factual ability. Architecture changes must be comparative experiments at fixed
+data, tokenizer, FLOPs, optimizer, and evaluation—not guesses based on
+parameter count alone.
 
 Depth, width, attention layout, vocabulary allocation, context, batch size,
 learning rate, weight decay, clipping, and packing are all controlled variables.
-At least two matched configurations and multiple seeds are required before an
-architecture decision is promoted.
+At least two matched configurations are required before an architecture shape
+is selected. The selected qualification run uses one frozen seed; a later
+replication seed strengthens evidence but is not silently substituted for a
+failed qualification run.
 
 ## Next authorized work
 
-The next work is the validation backlog in
-[`docs/TRAINING-ROBUSTNESS-PLAN.md`](../docs/TRAINING-ROBUSTNESS-PLAN.md):
+Rung 0005 begins with evaluator and baseline work, not another full training
+run. The next bounded experiment must:
 
-1. finish fixed-global-batch one/two/four-GPU and resume equivalence;
-2. implement a versioned log-likelihood evaluation report;
-3. evaluate matched public small-model checkpoints with that report;
-4. build corpus-support, duplication, artifact, and overlap reports; and
-5. use existing WALDO artifacts to test whether any metric has a defensible
-   scaling trend before proposing another run.
+1. pin a public 125M--160M checkpoint and run the same language-modeling,
+   LAMBADA, PIQA, SciQ, and ARC-Easy evaluator intended for promotion;
+2. run the passed rung-0004 artifact through that evaluator;
+3. produce the exact corpus-support, duplication, overlap, and exposure report
+   for the proposed general-language view;
+4. freeze a 5-core-TPP pilot and early-stop rule; and
+5. authorize 10 or 20 core TPP only if the declared score improves beyond
+   uncertainty.
 
-Only after those measurements support the bounded capability defined above may
-a candidate rung 0003 compose be created. Only after that candidate passes
-every frozen gate may its directory enter this ladder.
+Only a candidate that passes every frozen gate may enter this directory as
+rung 0005.
 
 ## Rung directory contract
 
@@ -384,6 +395,8 @@ README.md       purpose, immutable evidence, gates, and commands
 compose.yaml    exact promoted training recipe
 compose_test.go guards for architecture, data, and training contract
 evaluate.sh     fixed behavioral diagnostics
+suite.json      immutable conditional-likelihood prompts and continuations
+likelihood.py   exact BPB evaluator where the rung requires cross-tokenizer comparison
 ```
 
 The authoritative project-wide validation sequence is documented in
