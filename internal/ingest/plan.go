@@ -277,6 +277,11 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 				return Plan{}, fmt.Errorf("%s: bounded-text requires text input, not %q", artifact.Path, artifact.Format)
 			}
 			input.Adapter = ProfileBoundedText
+		case ProfileSeparatedText:
+			if artifact.Format != "text" {
+				return Plan{}, fmt.Errorf("%s: separated-text requires text input, not %q", artifact.Path, artifact.Format)
+			}
+			input.Adapter = ProfileSeparatedText
 		case ProfileXMLRecord:
 			if artifact.Format != "xml" {
 				return Plan{}, fmt.Errorf("%s: xml-record requires XML input, not %q", artifact.Path, artifact.Format)
@@ -561,6 +566,10 @@ func (plan Plan) Validate() error {
 		case ProfileBoundedText:
 			if artifact.Format != "text" || input.Profile.Type != ProfileBoundedText {
 				return fmt.Errorf("input %s has an inconsistent bounded-text adapter", artifact.Path)
+			}
+		case ProfileSeparatedText:
+			if artifact.Format != "text" || input.Profile.Type != ProfileSeparatedText {
+				return fmt.Errorf("input %s has an inconsistent separated-text adapter", artifact.Path)
 			}
 		case ProfileXMLRecord:
 			if artifact.Format != "xml" || input.Profile.Type != ProfileXMLRecord {
