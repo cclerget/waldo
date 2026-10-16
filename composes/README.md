@@ -168,26 +168,56 @@ parameters.
 
 Promotion criteria:
 
-- at matched training tokens, reach at least 90% of the normalized score of a
-  public 125M--160M baseline on the same pinned language-modeling, LAMBADA,
-  PIQA, SciQ, and ARC-Easy evaluator;
-- exceed random or majority baselines on at least four of those five tasks with
-  bootstrap confidence;
+- preserve finite training and evaluation metrics, select and exactly reload a
+  verified checkpoint, and select that checkpoint from the final 20% of the
+  current exposure phase;
+- keep every source view at or below four effective passes;
+- at each exposure phase, keep WikiText-103 test BPB within 10% of the matched
+  Pythia-160M checkpoint and reach at least 90% of its chance-normalized mean
+  over ARC-Easy normalized accuracy, PIQA normalized accuracy, SciQ normalized
+  accuracy, and LAMBADA exact-match accuracy;
+- at 5 core TPP, exceed chance on at least two of ARC-Easy, PIQA, and SciQ;
+- at the final 20-core-TPP promotion point, exceed chance on at least three of
+  the four declared downstream metrics;
 - 16/20 sampled prose continuations are grammatical and remain on topic for
   two sentences;
-- at least 80% emit EOS and no more than 2/20 enter an obvious loop; and
+- no more than 2/20 sampled or 3/20 greedy outputs enter an obvious loop; and
 - no open-domain short-answer, chat, coding, or multi-step reasoning gate.
 
-The public comparison must use a checkpoint with comparable token exposure;
-comparing a short WALDO run with a public model trained on hundreds of billions
-of tokens is invalid. Qualification begins at 5 core TPP and may advance to 10
-and 20 only when the scaling slope remains favorable. No source view may exceed
-four effective passes.
+EOS is diagnostic for this base model, not a gate. The public comparison uses
+Pythia-160M revisions `step256`, `step512`, and `step1000`: respectively
+536.9M, 1.074B, and 2.097B tokens, closely matching the candidate's 5, 10, and
+20 core TPP. Comparing a short WALDO run with the fully trained public model
+would be invalid.
 
-For each task, chance-normalized score is `(model - chance) / (public -
-chance)`. The rung gate uses the mean across the declared tasks. This prevents
-near-chance accuracy from looking competitive merely because both percentages
-are numerically close.
+The evaluator is frozen at `lm-eval==0.4.13`, zero-shot, seed 0, NumPy/Torch
+seed 1234, with task versions ARC-Easy 1, LAMBADA OpenAI 1, PIQA 1, SciQ 1,
+and WikiText 2. The measured public controls are:
+
+| Core TPP | Pythia revision | WikiText BPB | ARC-Easy norm | PIQA norm | SciQ norm | LAMBADA acc. | Required BPB | Required normalized mean |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 5 | `step256` | 2.0639 | 0.2837 | 0.5158 | 0.2230 | 0.0000 | <=2.2704 | >=0.0091 |
+| 10 | `step512` | 1.7576 | 0.2900 | 0.5229 | 0.2670 | 0.0000 | <=1.9334 | >=0.0274 |
+| 20 | `step1000` | 1.3582 | 0.2854 | 0.5495 | 0.4210 | 0.0648 | <=1.4940 | >=0.0988 |
+
+Chance is 0.25 for ARC-Easy and SciQ, 0.50 for PIQA, and 0 for LAMBADA.
+Each chance-normalized component is `(model - chance) / (1 - chance)`; the
+declared score is their arithmetic mean. Negative components remain negative.
+These thresholds were fixed from the public controls before candidate training.
+
+Qualification begins at 5 core TPP. It advances to 10 only if every 5-TPP gate
+passes and held-out loss is still improving, then to 20 under the same rule.
+Failure stops the candidate; it does not trigger an unplanned token extension.
+The candidate corpus is fixed at 45% Wikimedia, 30% filtered young-child
+Cosmopedia textbook narrative, 15% StackExchange, and 10% GPT-4 TinyStories.
+This is broad enough to test generalization but still restricted to explanatory,
+encyclopedic, question/answer, and simple narrative English.
+
+The passed rung-0004 control scores 1.5347 WikiText BPB, 0.3695 ARC-Easy,
+0.5729 PIQA, 0.5600 SciQ, and 0.2554 LAMBADA after about 20 core TPP on its
+narrower distribution. Those values are retention diagnostics, not 5-TPP
+promotion thresholds; requiring a short general run to beat a longer focused
+run would repeat the ladder's earlier gate-design error.
 
 ### Rung 0006: 350M compact general base
 
