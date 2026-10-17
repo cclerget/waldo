@@ -65,6 +65,27 @@ func TestRecordMapPreservesAndConservativelyCombinesLicenseArray(t *testing.T) {
 	}
 }
 
+func TestRecordMapPreservesMixedLicenseMentionUnderVersionedAdapter(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "records.jsonl")
+	rawLicense := "GPL-3.0-only; docs: https://creativecommons.org/licenses/by/4.0/"
+	contents := `{"text":"licensed text","metadata":{"license":"` + rawLicense + `"}}` + "\n"
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	profile := InputProfile{
+		Type:   ProfileRecordMap,
+		Fields: ProfileFields{Text: []string{"text"}, License: "metadata.license"},
+	}
+	plan := mappedFixturePlan(t, path, profile)
+	if plan.Writer.AdapterRecipe != textAdapterRecipe {
+		t.Fatalf("adapter recipe = %q, want %q", plan.Writer.AdapterRecipe, textAdapterRecipe)
+	}
+	rows := collectMappedRows(t, plan)
+	if len(rows) != 1 || rows[0].License != rawLicense || rows[0].LicenseRaw == nil || *rows[0].LicenseRaw != rawLicense {
+		t.Fatalf("rows = %+v", rows)
+	}
+}
+
 func TestRecordMapPreservesSelectedProvenanceMetadata(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "records.jsonl")
 	contents := `{"text":"training record","id":"record-7","metadata":{"dataset_id":"dataset-a","url":"https://source.example/7","tags":["one","two"]}}` + "\n"
