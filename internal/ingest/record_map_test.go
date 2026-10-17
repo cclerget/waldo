@@ -408,20 +408,22 @@ func TestPerRecordLicensesShareObjectsAndRemainInManifest(t *testing.T) {
 
 func TestMappedLicensePolicyExcludesAndCountsRows(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "licenses.jsonl")
-	contents := "{\"text\":\"keep\",\"license\":\"CC0-1.0\"}\n{\"text\":\"omit\",\"license\":\"LicenseRef-Proprietary\"}\n"
+	contents := "{\"text\":\"keep\",\"license\":[\"CC0-1.0\"]}\n" +
+		"{\"text\":\"omit\",\"license\":[\"LicenseRef-Proprietary\"]}\n" +
+		"{\"text\":\"omit compound\",\"license\":[\"MIT\",\"CC-BY-NC-4.0\"]}\n"
 	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	profile := InputProfile{
 		Type:          ProfileRecordMap,
-		Fields:        ProfileFields{Text: []string{"text"}, License: "license"},
-		LicensePolicy: corpus.LicensePolicy{Include: []string{"CC*"}},
+		Fields:        ProfileFields{Text: []string{"text"}, License: "license[]"},
+		LicensePolicy: corpus.LicensePolicy{Include: []string{"CC*", "MIT"}, Exclude: []string{"CC-BY-NC-*"}},
 	}
 	assembly, err := AssembleTextObjects(context.Background(), mappedFixturePlan(t, path, profile), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if assembly.RetainedDocs != 1 || assembly.RejectedDocs != 1 || assembly.Rejections[RejectionLicense] != 1 {
+	if assembly.RetainedDocs != 1 || assembly.RejectedDocs != 2 || assembly.Rejections[RejectionLicense] != 2 {
 		t.Fatalf("assembly = %+v", assembly)
 	}
 }

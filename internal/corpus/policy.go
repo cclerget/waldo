@@ -18,6 +18,10 @@ import (
 // such as the "A AND B" form produced for multi-license records.
 var licenseOperator = regexp.MustCompile(`(?i)\s+(?:AND|OR)\s+`)
 
+// licenseOperatorFragment finds an operator left behind after splitting,
+// which means it was missing required whitespace or an adjacent operand.
+var licenseOperatorFragment = regexp.MustCompile(`(?i)(?:^|\s|[()])(?:AND|OR)(?:$|\s|[()])`)
+
 type LicensePolicy struct {
 	Include []string `json:"include,omitempty" yaml:"include,omitempty"`
 	Exclude []string `json:"exclude,omitempty" yaml:"exclude,omitempty"`
@@ -48,7 +52,13 @@ func (p LicensePolicy) Allows(license string) bool {
 // expression or one of its terms, so a restricted term cannot hide behind a
 // more permissive one.
 func licenseExcluded(patterns []string, license string) bool {
-	terms := licenseTerms(license)
+	if len(patterns) == 0 {
+		return false
+	}
+	terms, valid := licenseTerms(license)
+	if !valid {
+		return true
+	}
 	for _, pattern := range patterns {
 		if matchLicense(pattern, license) {
 			return true
@@ -69,7 +79,10 @@ func licenseExcluded(patterns []string, license string) bool {
 // admit unlisted terms. OR terms are treated like AND terms: an alternative
 // that is not included keeps the expression out.
 func licenseIncluded(patterns []string, license string) bool {
-	terms := licenseTerms(license)
+	terms, valid := licenseTerms(license)
+	if !valid {
+		return false
+	}
 	for _, pattern := range patterns {
 		if (len(terms) <= 1 || licenseOperator.MatchString(pattern)) && matchLicense(pattern, license) {
 			return true
@@ -95,16 +108,37 @@ func licenseIncluded(patterns []string, license string) bool {
 
 // licenseTerms splits a license expression on AND/OR operators. Grouping
 // parentheses are dropped and WITH exceptions stay attached to their license.
-func licenseTerms(license string) []string {
+// Empty operands and unbalanced grouping make the expression invalid.
+func licenseTerms(license string) ([]string, bool) {
+	if !balancedLicenseParentheses(license) {
+		return nil, false
+	}
 	parts := licenseOperator.Split(license, -1)
 	terms := make([]string, 0, len(parts))
 	for _, part := range parts {
 		term := strings.TrimSpace(strings.Trim(strings.TrimSpace(part), "()"))
-		if term != "" {
-			terms = append(terms, term)
+		if term == "" || licenseOperatorFragment.MatchString(term) {
+			return nil, false
+		}
+		terms = append(terms, term)
+	}
+	return terms, true
+}
+
+func balancedLicenseParentheses(license string) bool {
+	depth := 0
+	for _, char := range license {
+		switch char {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth < 0 {
+				return false
+			}
 		}
 	}
-	return terms
+	return depth == 0
 }
 
 // matchLicense applies a shell-style pattern in which '*' and '?' also match

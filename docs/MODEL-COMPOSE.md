@@ -493,7 +493,9 @@ rejects the row when it matches the whole expression or any term. A license
 include must match every term, unless the include pattern is itself a compound
 expression that matches the whole value. `OR` alternatives are treated like
 `AND` terms, so an alternative that is not included keeps the row out. In
-license patterns, `*` and `?` also match `/`.
+license patterns, `*` and `?` also match `/`. Malformed compound expressions,
+including empty operands or unbalanced parentheses, do not satisfy an explicit
+license policy.
 
 The older `filter.licenses.include`/`exclude` representation remains accepted.
 It cannot be combined with `filter.exclude.licenses` in the same filter.

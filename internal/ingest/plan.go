@@ -22,8 +22,8 @@ import (
 const (
 	// Adapter recipes identify code-level mapping semantics that are not fully
 	// represented by the declarative input profile.
-	textAdapterRecipe         = "canonical-adapters-3"
-	conversationAdapterRecipe = "canonical-conversation-adapters-2"
+	textAdapterRecipe         = "canonical-adapters-4"
+	conversationAdapterRecipe = "canonical-conversation-adapters-3"
 )
 
 type Plan struct {

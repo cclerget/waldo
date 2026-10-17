@@ -68,3 +68,27 @@ func TestLicensePolicyRejectsInvalidGlob(t *testing.T) {
 		t.Fatal("NewLicensePolicy() accepted invalid glob")
 	}
 }
+
+func TestLicensePolicyRejectsMalformedExpressions(t *testing.T) {
+	include, err := NewLicensePolicy([]string{"MIT"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exclude, err := NewLicensePolicy(nil, []string{"LicenseRef-Proprietary"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, license := range []string{
+		"MIT AND ", "MIT AND", " AND MIT", "AND MIT", "(MIT", "MIT AND (",
+		"MIT AND ()", "MIT AND OR Apache-2.0", "MIT AND(Apache-2.0)",
+	} {
+		t.Run(license, func(t *testing.T) {
+			if include.Allows(license) {
+				t.Errorf("include policy allowed malformed expression %q", license)
+			}
+			if exclude.Allows(license) {
+				t.Errorf("exclude policy allowed malformed expression %q", license)
+			}
+		})
+	}
+}
