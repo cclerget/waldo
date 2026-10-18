@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"runtime"
 	"sort"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/openwaldo/waldo/internal/lookaside"
@@ -77,7 +79,7 @@ func preflightCompose(context Context, compose model.Compose, cache *lookaside.C
 	if err != nil {
 		return composePreflightReport{}, err
 	}
-	_, codec, err := compose.Architecture.ResolveTokenizer()
+	tokenizer, codec, err := compose.Architecture.ResolveTokenizer()
 	if err != nil {
 		return composePreflightReport{}, fmt.Errorf("compose tokenizer: %w", err)
 	}
@@ -91,7 +93,7 @@ func preflightCompose(context Context, compose model.Compose, cache *lookaside.C
 		if err != nil {
 			return composePreflightReport{}, err
 		}
-		measured, err := measureComposeStage(context.Execution, prepared, codec, progress)
+		measured, err := measureComposeStage(context.Execution, prepared, tokenizer, codec, progress)
 		if err != nil {
 			return composePreflightReport{}, err
 		}
@@ -103,7 +105,7 @@ func preflightCompose(context Context, compose model.Compose, cache *lookaside.C
 	return report, nil
 }
 
-func measureComposeStage(ctx stdcontext.Context, prepared model.PreparedStage, codec training.TokenCodec, progress io.Writer) (composeStagePreflight, error) {
+func measureComposeStage(ctx stdcontext.Context, prepared model.PreparedStage, tokenizer training.TokenizerSpec, codec training.TokenCodec, progress io.Writer) (composeStagePreflight, error) {
 	stage := prepared.Stage
 	if stage.Objective != "causal-language-modeling" || stage.Conversation != nil {
 		return composeStagePreflight{}, fmt.Errorf("stage %s preflight measurement currently requires text causal-language-modeling records", stage.Name)
@@ -116,12 +118,19 @@ func measureComposeStage(ctx stdcontext.Context, prepared model.PreparedStage, c
 	if err != nil {
 		return composeStagePreflight{}, fmt.Errorf("stage %s record partition: %w", stage.Name, err)
 	}
-	fmt.Fprintf(progress, "preflight/%s          measuring tokenizer fertility and record lengths\n", stage.Name)
-	trainingMeasurement, err := measureComposeRecordSource(ctx, partition.TrainingMeasurementRecords(), codec, parameters.SequenceLength)
+	workers := runtime.NumCPU()
+	if workers > 32 {
+		workers = 32
+	}
+	if workers < 1 {
+		workers = 1
+	}
+	fmt.Fprintf(progress, "preflight/%s          measuring tokenizer fertility and record lengths with %d CPU workers\n", stage.Name, workers)
+	trainingMeasurement, err := measureComposeRecordSource(ctx, partition.TrainingMeasurementRecords(), tokenizer, codec, parameters.SequenceLength, workers, progress, stage.Name)
 	if err != nil {
 		return composeStagePreflight{}, fmt.Errorf("stage %s measure training records: %w", stage.Name, err)
 	}
-	evaluationMeasurement, err := measureComposeRecordSource(ctx, partition.EvaluationRecords(), codec, parameters.SequenceLength)
+	evaluationMeasurement, err := measureComposeRecordSource(ctx, partition.EvaluationRecords(), tokenizer, codec, parameters.SequenceLength, workers, io.Discard, stage.Name)
 	if err != nil {
 		return composeStagePreflight{}, fmt.Errorf("stage %s measure evaluation records: %w", stage.Name, err)
 	}
@@ -204,42 +213,147 @@ func partitionProgressPrinter(output io.Writer, stage string) func(training.Part
 	}
 }
 
-func measureComposeRecordSource(ctx stdcontext.Context, source training.RecordSource, codec training.TokenCodec, sequenceLength int64) (composeCorpusMeasurement, error) {
-	measurement := composeCorpusMeasurement{tokenLengths: map[int]int64{}, byteLengths: map[int]int64{}}
-	byCorpus := map[string]*composeCorpusFertility{}
+func measureComposeRecordSource(ctx stdcontext.Context, source training.RecordSource, tokenizer training.TokenizerSpec, codec training.TokenCodec, sequenceLength int64, workers int, progress io.Writer, stage string) (composeCorpusMeasurement, error) {
+	if workers < 1 {
+		workers = 1
+	}
+	codecs := make([]training.TokenCodec, workers)
+	codecs[0] = codec
+	for index := 1; index < workers; index++ {
+		_, resolved, err := training.ResolveTokenizerSpec(tokenizer)
+		if err != nil {
+			return composeCorpusMeasurement{}, fmt.Errorf("create tokenizer worker %d: %w", index+1, err)
+		}
+		codecs[index] = resolved
+	}
+	measurements := make([]composeCorpusMeasurement, workers)
+	corpora := make([]map[string]*composeCorpusFertility, workers)
+	for index := range measurements {
+		measurements[index] = newComposeCorpusMeasurement()
+		corpora[index] = map[string]*composeCorpusFertility{}
+	}
+	batch := make([]training.Record, 0, workers*8)
+	var nextProgress int64 = 100_000
+	flush := func() error {
+		if len(batch) == 0 {
+			return nil
+		}
+		var group sync.WaitGroup
+		active := workers
+		if active > len(batch) {
+			active = len(batch)
+		}
+		group.Add(active)
+		for worker := 0; worker < active; worker++ {
+			go func(worker int) {
+				defer group.Done()
+				for position := worker; position < len(batch); position += active {
+					measureComposeRecord(batch[position], codecs[worker], sequenceLength, &measurements[worker], corpora[worker])
+				}
+			}(worker)
+		}
+		group.Wait()
+		batch = batch[:0]
+		return ctx.Err()
+	}
 	err := source.Stream(ctx, func(record training.Record) error {
-		bytes := len([]byte(record.Text))
-		characters := utf8.RuneCountInString(record.Text)
-		tokens := codec.Count(record.Text)
-		measurement.Records++
-		measurement.UTF8Bytes += int64(bytes)
-		measurement.Characters += int64(characters)
-		measurement.Tokens += int64(tokens)
-		measurement.tokenLengths[tokens]++
-		measurement.byteLengths[bytes]++
-		if int64(tokens+1) <= sequenceLength { // Include the per-record EOS boundary.
-			measurement.fitRecords++
+		batch = append(batch, record)
+		if len(batch) < cap(batch) {
+			return nil
 		}
-		corpus := record.Corpus
-		if corpus == "" {
-			corpus = "unattributed"
+		if err := flush(); err != nil {
+			return err
 		}
-		value := byCorpus[corpus]
-		if value == nil {
-			value = &composeCorpusFertility{Corpus: corpus}
-			byCorpus[corpus] = value
+		records, bytes := measurementProgress(measurements)
+		if records >= nextProgress {
+			fmt.Fprintf(progress, "preflight/%s          tokenizer measurement %s records, %s text\n", stage, humanCount(records), humanBytes(bytes))
+			nextProgress = records + 100_000
 		}
-		value.Records++
-		value.UTF8Bytes += int64(bytes)
-		value.Characters += int64(characters)
-		value.Tokens += int64(tokens)
 		return nil
 	})
+	if err == nil {
+		err = flush()
+	}
 	if err != nil {
 		return composeCorpusMeasurement{}, err
 	}
+	measurement := newComposeCorpusMeasurement()
+	byCorpus := map[string]*composeCorpusFertility{}
+	for index := range measurements {
+		mergeComposeMeasurement(&measurement, measurements[index])
+		mergeComposeCorpora(byCorpus, corpora[index])
+	}
 	measurement.finish(byCorpus)
 	return measurement, nil
+}
+
+func newComposeCorpusMeasurement() composeCorpusMeasurement {
+	return composeCorpusMeasurement{tokenLengths: map[int]int64{}, byteLengths: map[int]int64{}}
+}
+
+func measureComposeRecord(record training.Record, codec training.TokenCodec, sequenceLength int64, measurement *composeCorpusMeasurement, byCorpus map[string]*composeCorpusFertility) {
+	bytes := len([]byte(record.Text))
+	characters := utf8.RuneCountInString(record.Text)
+	tokens := codec.Count(record.Text)
+	measurement.Records++
+	measurement.UTF8Bytes += int64(bytes)
+	measurement.Characters += int64(characters)
+	measurement.Tokens += int64(tokens)
+	measurement.tokenLengths[tokens]++
+	measurement.byteLengths[bytes]++
+	if int64(tokens+1) <= sequenceLength { // Include the per-record EOS boundary.
+		measurement.fitRecords++
+	}
+	corpus := record.Corpus
+	if corpus == "" {
+		corpus = "unattributed"
+	}
+	value := byCorpus[corpus]
+	if value == nil {
+		value = &composeCorpusFertility{Corpus: corpus}
+		byCorpus[corpus] = value
+	}
+	value.Records++
+	value.UTF8Bytes += int64(bytes)
+	value.Characters += int64(characters)
+	value.Tokens += int64(tokens)
+}
+
+func measurementProgress(measurements []composeCorpusMeasurement) (int64, int64) {
+	var records, bytes int64
+	for _, measurement := range measurements {
+		records += measurement.Records
+		bytes += measurement.UTF8Bytes
+	}
+	return records, bytes
+}
+
+func mergeComposeMeasurement(target *composeCorpusMeasurement, source composeCorpusMeasurement) {
+	target.Records += source.Records
+	target.UTF8Bytes += source.UTF8Bytes
+	target.Characters += source.Characters
+	target.Tokens += source.Tokens
+	target.fitRecords += source.fitRecords
+	for value, count := range source.tokenLengths {
+		target.tokenLengths[value] += count
+	}
+	for value, count := range source.byteLengths {
+		target.byteLengths[value] += count
+	}
+}
+
+func mergeComposeCorpora(target, source map[string]*composeCorpusFertility) {
+	for corpus, value := range source {
+		merged := target[corpus]
+		if merged == nil {
+			merged = &composeCorpusFertility{Corpus: corpus}
+			target[corpus] = merged
+		}
+		merged.Records += value.Records
+		merged.UTF8Bytes += value.UTF8Bytes
+		merged.Characters += value.Characters
+		merged.Tokens += value.Tokens
+	}
 }
 
 func (measurement *composeCorpusMeasurement) finish(byCorpus map[string]*composeCorpusFertility) {

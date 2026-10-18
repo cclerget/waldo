@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,7 +33,7 @@ func (source preflightFixtureSource) Stream(ctx context.Context, consume func(tr
 }
 
 func TestMeasureComposeRecordSourceReportsFertilityLengthsAndFit(t *testing.T) {
-	_, codec, err := training.ResolveTokenizer("byte", training.ByteTokenizerRevision, 259)
+	spec, codec, err := training.ResolveTokenizer("byte", training.ByteTokenizerRevision, 259)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +41,7 @@ func TestMeasureComposeRecordSourceReportsFertilityLengthsAndFit(t *testing.T) {
 		{Text: "abc", Corpus: "alpha"},
 		{Text: "é", Corpus: "alpha"},
 		{Text: "12345", Corpus: "beta"},
-	}, codec, 4)
+	}, spec, codec, 4, 3, io.Discard, "fixture")
 	if err != nil {
 		t.Fatal(err)
 	}
