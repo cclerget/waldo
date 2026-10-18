@@ -43,6 +43,9 @@ import (
 )
 
 func runModelForecast(context Context, args []string, stdout, stderr io.Writer) error {
+	if boolOption(context, "preflight") {
+		return fmt.Errorf("--preflight was renamed because it is not a required training preflight; use --measure-tokenizer only when you intentionally want an optional, expensive, exact full-corpus tokenizer analysis")
+	}
 	if len(args) == 1 {
 		isCompose, err := model.IsComposeFile(args[0])
 		if err != nil {
@@ -58,8 +61,8 @@ func runModelForecast(context Context, args []string, stdout, stderr io.Writer) 
 			return runModelComposeForecast(context, args[0], stdout, stderr)
 		}
 	}
-	if boolOption(context, "preflight") {
-		return fmt.Errorf("--preflight requires exactly one model compose")
+	if measureTokenizerOption(context) {
+		return fmt.Errorf("--measure-tokenizer requires exactly one model compose")
 	}
 	return runModelIndexForecast(context, args, stdout, stderr)
 }
@@ -88,7 +91,7 @@ func runModelComposeForecast(context Context, path string, stdout, progress io.W
 		return err
 	}
 	var preflight *composePreflightReport
-	if boolOption(context, "preflight") {
+	if measureTokenizerOption(context) {
 		cache, err := lookaside.DefaultCache()
 		if err != nil {
 			return err
@@ -131,11 +134,11 @@ func runModelComposeForecast(context Context, path string, stdout, progress io.W
 	if context.JSON {
 		visible := visibleModelForecast(report, compareHosts)
 		return writeJSON(stdout, struct {
-			Compose   string                  `json:"compose"`
-			Forecast  model.ResourceForecast  `json:"forecast"`
-			Host      model.HostForecast      `json:"host"`
-			Preflight *composePreflightReport `json:"preflight,omitempty"`
-		}{Compose: composePath, Forecast: visible, Host: hostForecast, Preflight: preflight})
+			Compose              string                  `json:"compose"`
+			Forecast             model.ResourceForecast  `json:"forecast"`
+			Host                 model.HostForecast      `json:"host"`
+			TokenizerMeasurement *composePreflightReport `json:"tokenizer_measurement,omitempty"`
+		}{Compose: composePath, Forecast: visible, Host: hostForecast, TokenizerMeasurement: preflight})
 	}
 	fmt.Fprintf(stdout, "COMPOSE:     %s\n", composePath)
 	writeModelForecast(stdout, report, hostForecast, compareHosts, &compose.Architecture)
@@ -143,6 +146,10 @@ func runModelComposeForecast(context Context, path string, stdout, progress io.W
 		writeComposePreflight(stdout, *preflight)
 	}
 	return nil
+}
+
+func measureTokenizerOption(context Context) bool {
+	return boolOption(context, "measure-tokenizer")
 }
 
 func runModelIndexForecast(context Context, paths []string, stdout, warnings io.Writer) error {

@@ -19,6 +19,28 @@ waldo model train babble composes/0001-babble.yaml
 exist, or appends the declared stages when the existing model has exactly the
 same architecture.
 
+### Optional exact tokenizer measurement
+
+Use `--measure-tokenizer` when testing a tokenizer or qualifying a new
+tokenizer/corpus combination:
+
+```bash
+waldo model forecast model.yaml --measure-tokenizer
+```
+
+This is an exact full-corpus analysis, not a normal training prerequisite. It
+materializes every selected shard, applies the compose filters and held-out
+partition, and tokenizes every eligible record. WALDO reports tokenizer
+fertility, record-length percentiles, context fit, packing boundaries, exact
+source exposure, and effective corpus passes. Runtime therefore scales with
+the complete selected text volume and can be substantial for large corpora.
+The ordinary `forecast` command remains the fast metadata-based forecast. Do
+not routinely run `--measure-tokenizer` before `model train`: the measurement
+artifact is not currently consumed by training, so that workflow scans the
+corpus twice. The former ambiguous name `--preflight` now fails immediately
+with this guidance instead of starting the expensive scan. Structured output
+places the result under `tokenizer_measurement`.
+
 Forecasts calculate fixed-token stages immediately. Epoch-driven stage sizes
 depend on the selected index revision, filters, held-out records, tokenizer,
 and objective, so their exact tokens, steps, and added runtime are reported
@@ -28,8 +50,9 @@ Forecast JSON includes a versioned `forecast.fitness` object. It decomposes
 WALDO's exact bias-free RoPE/RMSNorm/GQA/SwiGLU architecture, reports both
 conventional `6ND` and architecture-aware compute approximations, separates
 memory components, and shows batch arithmetic for compatible world sizes.
-Corpus-dependent fields explicitly say `requires-corpus-preflight` until the
-selected immutable corpus has been scanned with the selected tokenizer. The
+Corpus-dependent fields explicitly say `requires-corpus-preflight` (the stable
+JSON compatibility value) until `--measure-tokenizer` has scanned the selected
+immutable corpus with the selected tokenizer. The
 forecast refuses empirical loss prediction when comparable run evidence is
 absent; it never treats a token/parameter ratio as a capability promise. The
 formulas and evidence policy are specified in

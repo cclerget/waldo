@@ -85,7 +85,7 @@ func TestWriteComposePreflightMakesScopeExplicit(t *testing.T) {
 	}}}
 	var output bytes.Buffer
 	writeComposePreflight(&output, report)
-	for _, want := range []string{"PREFLIGHT example", "4.000 bytes/token", "2.00 effective corpus passes", "not disjoint from tokenizer training"} {
+	for _, want := range []string{"TOKENIZER MEASUREMENT example", "4.000 bytes/token", "2.00 effective corpus passes", "not disjoint from tokenizer training"} {
 		if !strings.Contains(output.String(), want) {
 			t.Fatalf("output missing %q: %s", want, output.String())
 		}
@@ -129,20 +129,32 @@ stages:
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	if code := Run([]string{"--json", "model", "forecast", composePath, "--preflight"}, &stdout, &stderr); code != 0 {
+	if code := Run([]string{"--json", "model", "forecast", composePath, "--measure-tokenizer"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("code = %d, stderr = %q", code, stderr.String())
 	}
 	var output struct {
-		Preflight composePreflightReport `json:"preflight"`
+		TokenizerMeasurement composePreflightReport `json:"tokenizer_measurement"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
 		t.Fatal(err)
 	}
-	if len(output.Preflight.Stages) != 1 {
-		t.Fatalf("preflight = %+v", output.Preflight)
+	if len(output.TokenizerMeasurement.Stages) != 1 {
+		t.Fatalf("tokenizer measurement = %+v", output.TokenizerMeasurement)
 	}
-	stage := output.Preflight.Stages[0]
+	stage := output.TokenizerMeasurement.Stages[0]
 	if stage.Training.Records != 1 || stage.Training.Tokens == 0 || stage.PlannedTrainingTokens != 128 || stage.EffectiveCorpusPasses <= 0 {
 		t.Fatalf("stage = %+v", stage)
+	}
+}
+
+func TestModelForecastRejectsAmbiguousPreflightName(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"model", "forecast", "--preflight"}, &stdout, &stderr); code == 0 {
+		t.Fatal("deprecated --preflight unexpectedly succeeded")
+	}
+	for _, want := range []string{"--preflight was renamed", "--measure-tokenizer", "not a required training preflight"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("stderr missing %q: %s", want, stderr.String())
+		}
 	}
 }

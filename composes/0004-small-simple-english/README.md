@@ -73,9 +73,18 @@ one canonical record without rewriting the source artifact.
 
 ## Run and evaluate
 
+The exact tokenizer measurement is optional and is not reusable by training;
+do not run it routinely before the training command. Use it only when
+qualifying the tokenizer/corpus combination:
+
 ```console
 go run ./cmd/waldo/ model forecast \
-  composes/0004-small-simple-english/compose.yaml --preflight
+  composes/0004-small-simple-english/compose.yaml --measure-tokenizer
+```
+
+Train and evaluate with:
+
+```console
 go run ./cmd/waldo/ model train small-simple-english-65m-gpt4-education-01 \
   composes/0004-small-simple-english/compose.yaml
 

@@ -92,7 +92,10 @@ TinyStories result.
 The portable compose proves vocabulary and token context. Corpus-dependent
 facts require the selected immutable corpus revision and tokenizer, so compose
 forecast marks them `requires-corpus-preflight` rather than inventing values.
-The preflight extension must persist, overall and per corpus:
+That name is retained in JSON for compatibility; users request the optional
+exact scan with `waldo model forecast <compose> --measure-tokenizer`. This is a
+potentially expensive tokenizer qualification operation, not a routine
+training prerequisite. The measurement reports, overall and per corpus:
 
 - exact UTF-8 bytes divided by emitted tokenizer tokens;
 - effective context bytes and an observed character distribution;

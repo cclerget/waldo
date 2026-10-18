@@ -31,9 +31,18 @@ and EOS behavior with a trained byte-BPE tokenizer.
 
 From the repository root:
 
+The exact tokenizer measurement is optional and is not reusable by training;
+do not run it routinely before the training command. Use it only when
+qualifying the tokenizer/corpus combination:
+
 ```console
 go run ./cmd/waldo/ model forecast \
-  composes/0002-tinystories-bpe/compose.yaml --preflight
+  composes/0002-tinystories-bpe/compose.yaml --measure-tokenizer
+```
+
+Train and evaluate with:
+
+```console
 go run ./cmd/waldo/ model train tinystories-bpe-20tpp-01 \
   composes/0002-tinystories-bpe/compose.yaml --hostfile ~/hostfile
 ./composes/0002-tinystories-bpe/evaluate.sh \

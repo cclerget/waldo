@@ -408,7 +408,7 @@ func histogramQuantile(histogram map[int]int64, total int64, quantile float64) i
 
 func writeComposePreflight(output io.Writer, report composePreflightReport) {
 	for _, stage := range report.Stages {
-		fmt.Fprintf(output, "\nPREFLIGHT %s\n", stage.Name)
+		fmt.Fprintf(output, "\nTOKENIZER MEASUREMENT %s\n", stage.Name)
 		fmt.Fprintf(output, "TRAINING:    %s records, %s UTF-8 bytes, %s tokenizer tokens\n", humanCount(stage.Training.Records), humanBytes(stage.Training.UTF8Bytes), humanCount(stage.Training.Tokens))
 		fmt.Fprintf(output, "FERTILITY:   %.3f bytes/token; %d tokens = %.0f effective context bytes\n", stage.Training.BytesPerToken, stage.SequenceTokens, stage.EffectiveContextBytes)
 		fmt.Fprintf(output, "RECORDS:     tokens p50/p90/p95 %d/%d/%d; bytes %d/%d/%d; %.1f%% fit one sequence\n", stage.Training.RecordP50Tokens, stage.Training.RecordP90Tokens, stage.Training.RecordP95Tokens, stage.Training.RecordP50Bytes, stage.Training.RecordP90Bytes, stage.Training.RecordP95Bytes, stage.Training.FitOneSequencePercent)

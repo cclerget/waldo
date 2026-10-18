@@ -84,7 +84,7 @@ go run ./cmd/waldo/ model train tiny-grounded-responder-30m-01 \
   tiny-grounded-responder-30m-01 /tmp/tiny-grounded-responder-eos.jsonl 0.8 42 1536
 ```
 
-The specialized `forecast --preflight` measurement currently accepts text
+The specialized `forecast --measure-tokenizer` analysis currently accepts text
 causal-language-modeling records only. `model train` still performs the
 mandatory structured-conversation selection, holdout, tokenization, packing,
 and budget preflight before starting the supervised worker.
