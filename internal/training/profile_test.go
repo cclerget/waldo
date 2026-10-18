@@ -350,7 +350,8 @@ func TestRecordFiltersApplyToPartitionTargetsAndTrainingStream(t *testing.T) {
 }
 
 type countingTokenCodec struct {
-	counts int
+	counts  int
+	encodes int
 }
 
 func (codec *countingTokenCodec) Count(text string) int {
@@ -358,8 +359,23 @@ func (codec *countingTokenCodec) Count(text string) int {
 	return len([]byte(text))
 }
 
-func (*countingTokenCodec) Encode(text string) []int   { return byteCodec{}.Encode(text) }
+func (codec *countingTokenCodec) Encode(text string) []int {
+	codec.encodes++
+	return byteCodec{}.Encode(text)
+}
 func (*countingTokenCodec) Decode(tokens []int) string { return byteCodec{}.Decode(tokens) }
+
+func TestCausalCapacityCountsWithoutMaterializingTokenIDs(t *testing.T) {
+	codec := &countingTokenCodec{}
+	source := &trackedEpochSource{records: []Record{{Text: strings.Repeat("a", 32)}, {Text: strings.Repeat("b", 32)}}}
+	epochs, err := minimumEpochsForSequences(context.Background(), source, codec, "causal-language-modeling", ConversationTransform{}, 8, 4, 4, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if epochs != 1 || codec.counts != 1 || codec.encodes != 0 {
+		t.Fatalf("epochs = %d, tokenizer counts/encodes = %d/%d; causal capacity should stop after counting the first record", epochs, codec.counts, codec.encodes)
+	}
+}
 
 func TestRecordPartitionTokenizesAndCachesOnlySelectedRecords(t *testing.T) {
 	texts := make([]string, 1000)

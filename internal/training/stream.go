@@ -852,12 +852,12 @@ func minimumEpochsForSequences(ctx context.Context, source epochRecordSource, co
 		var epochTargets bool
 		err := source.streamEpoch(ctx, epoch, func(record Record) error {
 			records++
-			tokens, mask, err := tokenizeRecord(record, codec, objective, conversation)
+			hasTargets, capacityReached, err := addRecordCapacity(&packer, record, codec, objective, conversation, requiredSequences)
 			if err != nil {
 				return err
 			}
-			epochTargets = epochTargets || slices.Contains(mask, true)
-			if packer.add(tokens, mask, requiredSequences) {
+			epochTargets = epochTargets || hasTargets
+			if capacityReached {
 				return reached
 			}
 			if records == 1 || records%10_000 == 0 {
@@ -947,11 +947,11 @@ func (partition RecordPartition) trainingSequenceCapacityWithProgress(ctx contex
 	reached := errors.New("requested training step capacity reached")
 	err = source.Stream(ctx, func(record Record) error {
 		records++
-		tokens, recordMask, err := tokenizeRecord(record, partition.codec, partition.objective, partition.conversation)
+		_, reachedCapacity, err := addRecordCapacity(&packer, record, partition.codec, partition.objective, partition.conversation, requiredSequences)
 		if err != nil {
 			return err
 		}
-		if packer.add(tokens, recordMask, requiredSequences) {
+		if reachedCapacity {
 			return reached
 		}
 		if progress != nil && (records == 1 || records%10_000 == 0) {
@@ -982,9 +982,36 @@ type sequenceCapacityPacker struct {
 	sequences      int64
 }
 
+// addRecordCapacity avoids materializing token IDs and all-true loss masks for
+// ordinary causal text. Capacity planning needs only the encoded length in
+// that case; conversations and masked objectives retain exact tokenization.
+func addRecordCapacity(packer *sequenceCapacityPacker, record Record, codec TokenCodec, objective string, conversation ConversationTransform, requiredSequences int64) (bool, bool, error) {
+	if record.decodeErr != nil {
+		return false, false, record.decodeErr
+	}
+	if record.Conversation == nil && objective == "causal-language-modeling" {
+		return true, packer.addFullySupervised(codec.Count(record.Text), requiredSequences), nil
+	}
+	tokens, mask, err := tokenizeRecord(record, codec, objective, conversation)
+	if err != nil {
+		return false, false, err
+	}
+	hasTargets := slices.Contains(mask, true)
+	return hasTargets, packer.add(tokens, mask, requiredSequences), nil
+}
+
 // add preserves the worker's continuous-EOS packing window. It reports
 // whether at least one supervised sequence was completed by this record.
 func (packer *sequenceCapacityPacker) add(tokens []int, mask []bool, requiredSequences int64) bool {
+	if !slices.Contains(mask, false) {
+		return packer.addFullySupervised(len(tokens), requiredSequences)
+	}
+	if len(packer.masks) == 0 && packer.buffered > 0 {
+		packer.masks = make([]bool, packer.buffered)
+		for index := range packer.masks {
+			packer.masks[index] = true
+		}
+	}
 	packer.buffered += len(tokens) + 1 // Worker framing appends EOS.
 	packer.masks = append(packer.masks, mask...)
 	window := packer.sequenceLength + 1
@@ -1001,9 +1028,44 @@ func (packer *sequenceCapacityPacker) add(tokens []int, mask []bool, requiredSeq
 	return false
 }
 
+func (packer *sequenceCapacityPacker) addFullySupervised(tokenCount int, requiredSequences int64) bool {
+	framed := tokenCount + 1 // Worker framing appends EOS.
+	if len(packer.masks) > 0 {
+		packer.buffered += framed
+		for range framed {
+			packer.masks = append(packer.masks, true)
+		}
+		window := packer.sequenceLength + 1
+		for packer.buffered >= window {
+			packer.sequences++
+			if requiredSequences > 0 && packer.sequences >= requiredSequences {
+				return true
+			}
+			packer.buffered -= packer.sequenceLength
+			packer.masks = packer.masks[packer.sequenceLength:]
+		}
+		return false
+	}
+	packer.buffered += framed
+	window := packer.sequenceLength + 1
+	if packer.buffered < window {
+		return false
+	}
+	completed := int64((packer.buffered-window)/packer.sequenceLength + 1)
+	if requiredSequences > 0 && packer.sequences+completed >= requiredSequences {
+		needed := requiredSequences - packer.sequences
+		packer.sequences = requiredSequences
+		packer.buffered -= int(needed) * packer.sequenceLength
+		return true
+	}
+	packer.sequences += completed
+	packer.buffered -= int(completed) * packer.sequenceLength
+	return false
+}
+
 func (packer *sequenceCapacityPacker) terminalSequences() int64 {
 	sequences := packer.sequences
-	if packer.buffered > 1 && slices.Contains(packer.masks[1:], true) {
+	if packer.buffered > 1 && (len(packer.masks) == 0 || slices.Contains(packer.masks[1:], true)) {
 		sequences++
 	}
 	return sequences
