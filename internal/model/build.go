@@ -1792,7 +1792,10 @@ func findComposeTransaction(root string, requested composeTransaction) (string, 
 			return workspace, &existing, nil
 		}
 		if existing.Kind == requested.Kind && existing.Schema == requested.Schema && existing.Name == requested.Name {
-			return "", nil, fmt.Errorf("model %q has an unfinished compose with different inputs; repeat the exact command to resume it", requested.Name)
+			if reflect.DeepEqual(candidate.Compose, requested.Compose) {
+				return "", nil, fmt.Errorf("model %q has an unfinished compose with different corpus BOMs (saved %v, requested %v); repeat the exact command to resume it", requested.Name, candidate.CorpusBOMs, requested.CorpusBOMs)
+			}
+			return "", nil, fmt.Errorf("model %q has an unfinished compose with a different resolved compose; repeat the exact command to resume it", requested.Name)
 		}
 	}
 	return "", nil, nil
