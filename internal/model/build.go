@@ -1916,13 +1916,24 @@ func validateStagedComposeRun(inspection Inspection, index int, prepared Prepare
 			return err
 		}
 	}
+	// A token-budget preflight derives the minimum corpus pass count after the
+	// initial planning parameters are resolved. The persisted preflight remains
+	// authoritative on resume, so compare that derived field against itself;
+	// Train will reload the same verified preflight before opening the stream.
+	if prepared.Stage.Parameters.Tokens > 0 && prepared.Stage.Parameters.Epochs == 0 {
+		parameters.Epochs = bom.Parameters.Epochs
+	}
 	conversation := training.ConversationTransform{}
 	if prepared.Stage.Conversation != nil {
 		conversation = *prepared.Stage.Conversation
 	}
 	corpusMatches := bom.CorpusBOMSHA256 == corpusHash || equivalentPlannedCorpusBOM(bom.CorpusBOM, prepared.BOM)
-	if bom.Stage != prepared.Stage.Name || bom.StageType != prepared.Stage.Type || bom.Objective != prepared.Stage.Objective || !reflect.DeepEqual(bom.Conversation, conversation) || !corpusMatches || !equivalentTrainingParameters(bom.Parameters, parameters) {
-		return fmt.Errorf("run %d immutable facts do not match stage %s", index+1, prepared.Stage.Name)
+	parametersMatch := equivalentTrainingParameters(bom.Parameters, parameters)
+	if bom.Stage != prepared.Stage.Name || bom.StageType != prepared.Stage.Type || bom.Objective != prepared.Stage.Objective || !reflect.DeepEqual(bom.Conversation, conversation) || !corpusMatches || !parametersMatch {
+		return fmt.Errorf("run %d immutable facts do not match stage %s (name=%t type=%t objective=%t conversation=%t corpus=%t parameters=%t; saved parameters=%+v; requested parameters=%+v)", index+1, prepared.Stage.Name,
+			bom.Stage == prepared.Stage.Name, bom.StageType == prepared.Stage.Type, bom.Objective == prepared.Stage.Objective,
+			reflect.DeepEqual(bom.Conversation, conversation), corpusMatches, parametersMatch,
+			training.NormalizeResolvedParameters(bom.Parameters), training.NormalizeResolvedParameters(parameters))
 	}
 	return nil
 }

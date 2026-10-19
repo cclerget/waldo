@@ -804,6 +804,28 @@ func TestAnyVerifiedCheckpointBackedFailureIsResumable(t *testing.T) {
 	}
 }
 
+func TestValidateStagedComposeRunAcceptsDerivedTokenBudgetEpochs(t *testing.T) {
+	stage := testStage("pretrain")
+	stage.Parameters = training.Parameters{Tokens: 100, BatchSize: 1, SequenceLength: 10, LearningRate: 0.001, Seed: 1}
+	prepared := preparedFixture(t, stage)
+	parameters, err := stage.ResolvePlanningParameters()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parameters.Epochs = 3
+	corpusHash, err := hashJSON(prepared.BOM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inspection := Inspection{Model: ModelRecord{Runs: []RunPin{{Stage: stage.Name}}}, RunBOMs: []RunBOM{{
+		Stage: stage.Name, StageType: stage.Type, Objective: stage.Objective,
+		CorpusBOMSHA256: corpusHash, CorpusBOM: prepared.BOM, Parameters: parameters,
+	}}}
+	if err := validateStagedComposeRun(inspection, 0, prepared); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestFixedTokenResumeMayCorrectOnlyDerivedEpochLimit(t *testing.T) {
 	persisted, err := training.ResolveParameters(training.Parameters{Tokens: 100, BatchSize: 1, SequenceLength: 10, LearningRate: 0.001, Seed: 1})
 	if err != nil {
