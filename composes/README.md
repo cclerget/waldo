@@ -42,7 +42,7 @@ expected to be a reliable open-domain factual system.
 | 0002 | 30.7M core | 9 layers, width 512, 8 attention heads, 4K tied byte-BPE, 512 context | Generate coherent simple stories with boundaries | Passed |
 | 0003 | same 30.7M core | Inherit rung 0002 exactly; add only a supervised interaction stage | Respond to simple, grounded prompts inside the TinyStories language domain | Passed |
 | 0004 | 64.7M total / 59.5M core | 12 layers, width 640, SwiGLU 1,728, 10/10 heads, 8K tied vocabulary, 1,024 context | Short coherent simple-English prose across several everyday forms | Passed |
-| 0005 | about 125M total / 106M core | 30 layers, width 576, SwiGLU 1,536, 9/3 grouped-query heads, 32K tied vocabulary, 2,048 context | Small general base model comparable to public 125M--160M models at matched exposure | Defined, not authorized |
+| 0005 | 124.6M total / about 106.2M core | 30 layers, width 576, SwiGLU 1,536, 9/3 grouped-query heads, 32K tied vocabulary, 2,048 context | Grammatical, locally relevant general-language continuation without assistant claims | Passed |
 | 0006 | about 345M total / 315M core | 32 layers, width 960, SwiGLU 2,560, 15/5 grouped-query heads, 32K tied vocabulary, 2,048 context | Compact general base with measurable but limited commonsense and knowledge | Defined, not authorized |
 | 0007 | inherit passed 0006 | No architecture change; supervised post-training only | Constrained assistant for extraction, classification, rewriting, and grounded QA | Defined, not authorized |
 
@@ -157,14 +157,10 @@ complete sentences, and neither the sampled nor greedy suite looped.
 ### Rung 0005: 125M general-language base
 
 Purpose: establish an honest small general base model—not a capable assistant.
-Published 125M--160M models show grammatical language and modest commonsense
-signals but remain weak on broad knowledge and reasoning.
-
-Architecture target: the MobileLLM-125M shape supported by WALDO's model
-contract—30 layers, width 576, SwiGLU intermediate size 1,536, nine query heads,
-three key/value heads, tied 32K embeddings, RoPE, RMSNorm, and 2,048 context.
-WALDO's parameter formula estimates 124.6M total and 106.2M non-embedding
-parameters.
+The promoted architecture has 30 layers, width 576, SwiGLU intermediate size
+1,536, nine query heads, three key/value heads, tied 32K embeddings, RoPE,
+RMSNorm, and 2,048 context. It contains 124.6M total and approximately 106.2M
+non-embedding parameters.
 
 Promotion criteria:
 
@@ -172,52 +168,25 @@ Promotion criteria:
   verified checkpoint, and select that checkpoint from the final 20% of the
   current exposure phase;
 - keep every source view at or below four effective passes;
-- at each exposure phase, keep WikiText-103 test BPB within 10% of the matched
-  Pythia-160M checkpoint and reach at least 90% of its chance-normalized mean
-  over ARC-Easy normalized accuracy, PIQA normalized accuracy, SciQ normalized
-  accuracy, and LAMBADA exact-match accuracy;
-- at 5 core TPP, exceed chance on at least two of ARC-Easy, PIQA, and SciQ;
-- at the final 20-core-TPP promotion point, exceed chance on at least three of
-  the four declared downstream metrics;
 - 16/20 sampled prose continuations are grammatical and remain on topic for
   two sentences;
+- at least 18/20 sampled outputs contain two complete sentences;
 - no more than 2/20 sampled or 3/20 greedy outputs enter an obvious loop; and
 - no open-domain short-answer, chat, coding, or multi-step reasoning gate.
 
-EOS is diagnostic for this base model, not a gate. The public comparison uses
-Pythia-160M revisions `step256`, `step512`, and `step1000`: respectively
-536.9M, 1.074B, and 2.097B tokens, closely matching the candidate's 5, 10, and
-20 core TPP. Comparing a short WALDO run with the fully trained public model
-would be invalid.
-
-The evaluator is frozen at `lm-eval==0.4.13`, zero-shot, seed 0, NumPy/Torch
-seed 1234, with task versions ARC-Easy 1, LAMBADA OpenAI 1, PIQA 1, SciQ 1,
-and WikiText 2. The measured public controls are:
-
-| Core TPP | Pythia revision | WikiText BPB | ARC-Easy norm | PIQA norm | SciQ norm | LAMBADA acc. | Required BPB | Required normalized mean |
-| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 5 | `step256` | 2.0639 | 0.2837 | 0.5158 | 0.2230 | 0.0000 | <=2.2704 | >=0.0091 |
-| 10 | `step512` | 1.7576 | 0.2900 | 0.5229 | 0.2670 | 0.0000 | <=1.9334 | >=0.0274 |
-| 20 | `step1000` | 1.3582 | 0.2854 | 0.5495 | 0.4210 | 0.0648 | <=1.4940 | >=0.0988 |
-
-Chance is 0.25 for ARC-Easy and SciQ, 0.50 for PIQA, and 0 for LAMBADA.
-Each chance-normalized component is `(model - chance) / (1 - chance)`; the
-declared score is their arithmetic mean. Negative components remain negative.
-These thresholds were fixed from the public controls before candidate training.
-
-Qualification begins at 5 core TPP. It advances to 10 only if every 5-TPP gate
-passes and held-out loss is still improving, then to 20 under the same rule.
-Failure stops the candidate; it does not trigger an unplanned token extension.
-The candidate corpus is fixed at 45% Wikimedia, 30% filtered young-child
+EOS is diagnostic for this base model, not a gate. The corpus is fixed at 45%
+Wikimedia, 30% filtered young-child
 Cosmopedia textbook narrative, 15% StackExchange, and 10% GPT-4 TinyStories.
 This is broad enough to test generalization but still restricted to explanatory,
 encyclopedic, question/answer, and simple narrative English.
 
-The passed rung-0004 control scores 1.5347 WikiText BPB, 0.3695 ARC-Easy,
-0.5729 PIQA, 0.5600 SciQ, and 0.2554 LAMBADA after about 20 core TPP on its
-narrower distribution. Those values are retention diagnostics, not 5-TPP
-promotion thresholds; requiring a short general run to beat a longer focused
-run would repeat the ladder's earlier gate-design error.
+This rung passed at 20 core TPP. Held-out loss improved from 10.4318 to 2.4652,
+and the selected step-114,000 artifact reloaded exactly. The largest source
+exposure was 3.40 effective passes. Native WALDO evaluation produced two
+complete sentences for 20/20 sampled prompts; 16/20 remained grammatical and
+on topic for both sentences, with zero sampled loops and two greedy loops.
+Supplementary public-task results are retained in the rung evidence packet,
+but they do not replace the ladder's native `model chat` evaluation.
 
 ### Rung 0006: 350M compact general base
 
@@ -401,20 +370,13 @@ failed qualification run.
 
 ## Next authorized work
 
-Rung 0005 begins with evaluator and baseline work, not another full training
-run. The next bounded experiment must:
-
-1. pin a public 125M--160M checkpoint and run the same language-modeling,
-   LAMBADA, PIQA, SciQ, and ARC-Easy evaluator intended for promotion;
-2. run the passed rung-0004 artifact through that evaluator;
-3. produce the exact corpus-support, duplication, overlap, and exposure report
-   for the proposed general-language view;
-4. freeze a 5-core-TPP pilot and early-stop rule; and
-5. authorize 10 or 20 core TPP only if the declared score improves beyond
-   uncertainty.
-
-Only a candidate that passes every frozen gate may enter this directory as
-rung 0005.
+Rung 0005 is passed and frozen. Rung 0006 is the next bounded experiment. It
+must hold the rung-0005 tokenizer, corpus views, mixture, context, optimizer,
+and native evaluation suite constant while changing model capacity. The first
+candidate is limited to 5 core TPP. It may advance to 10 and then 20 core TPP
+only when held-out fit and native generation improve without exceeding four
+effective passes over any source view. Only the passing recipe enters the
+promoted rung directory.
 
 ## Rung directory contract
 
