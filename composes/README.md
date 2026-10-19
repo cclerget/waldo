@@ -43,7 +43,7 @@ expected to be a reliable open-domain factual system.
 | 0003 | same 30.7M core | Inherit rung 0002 exactly; add only a supervised interaction stage | Respond to simple, grounded prompts inside the TinyStories language domain | Passed |
 | 0004 | 64.7M total / 59.5M core | 12 layers, width 640, SwiGLU 1,728, 10/10 heads, 8K tied vocabulary, 1,024 context | Short coherent simple-English prose across several everyday forms | Passed |
 | 0005 | 124.6M total / about 106.2M core | 30 layers, width 576, SwiGLU 1,536, 9/3 grouped-query heads, 32K tied vocabulary, 2,048 context | Grammatical, locally relevant general-language continuation without assistant claims | Passed |
-| 0006 | about 345M total / 315M core | 32 layers, width 960, SwiGLU 2,560, 15/5 grouped-query heads, 32K tied vocabulary, 2,048 context | Compact general base with measurable but limited commonsense and knowledge | Defined, not authorized |
+| 0006 | 345.4M total / 314.6M core | 32 layers, width 960, SwiGLU 2,560, 15/5 grouped-query heads, 32K tied vocabulary, 2,048 context | Improve distribution fit and sustain longer coherent general-language continuation | 5-TPP pilot prepared |
 | 0007 | inherit passed 0006 | No architecture change; supervised post-training only | Constrained assistant for extraction, classification, rewriting, and grounded QA | Defined, not authorized |
 
 The 125M and 350M designs follow the deep-and-thin, tied-embedding, grouped-
@@ -190,27 +190,38 @@ but they do not replace the ladder's native `model chat` evaluation.
 
 ### Rung 0006: 350M compact general base
 
-Purpose: demonstrate measurable general-language and commonsense improvement
-while remaining explicit that a 350M base model is not reliably knowledgeable.
+Purpose: test whether increased capacity improves general-language distribution
+fit and supports longer coherent continuation. It remains a raw base model.
+Reliable factual recall, assistant behavior, coding, and reasoning are not
+promotion claims.
 
 Architecture target: the MobileLLM-350M scale—32 layers, width 960, SwiGLU
 intermediate size 2,560, 15 query heads, five key/value heads, tied 32K
 embeddings, RoPE, RMSNorm, and 2,048 context. WALDO's parameter formula
 estimates 345.4M total and 314.6M non-embedding parameters.
 
-Promotion criteria:
+The capacity pilot changes only the architecture. It retains rung 0005's
+tokenizer, corpus views and weights, 2,048-token context, optimizer, schedule,
+seed, held-out selection, and native generation suite. At 1.573B tokens, the
+passed rung-0005 architecture recorded held-out BPB 0.9243; that is the matched
+token-exposure baseline.
 
-- at matched exposure, reach at least 90% of a public 350M--410M baseline's
-  normalized score on the identical evaluator;
-- materially outperform the passed rung 0005 on aggregate BPB and at least
-  three of LAMBADA, PIQA, SciQ, ARC-Easy, and HellaSwag;
-- 18/20 sampled continuations remain grammatical and on topic for one
-  paragraph;
-- at least 90% emit EOS and no more than 1/20 sampled outputs loops; and
-- factual answers are reported diagnostically but are not a promotion gate.
+The 5-core-TPP pilot may advance only if:
 
-The same 5/10/20-core-TPP checkpoint and four-effective-pass limits apply.
-Beyond 20 TPP requires a new evidence review, not an automatic extension.
+- training and evaluation remain finite, the artifact reloads exactly, and the
+  selected checkpoint lies in the final 20%;
+- no source view exceeds four effective passes;
+- selected held-out BPB is no worse than 0.9243;
+- at least 16/20 sampled outputs remain grammatical and on topic for two
+  sentences, and at least 18/20 contain two complete sentences; and
+- no more than 2/20 sampled or 3/20 greedy outputs loop.
+
+Ten and twenty core TPP are follow-on exposure phases, not automatic full
+runs. Final promotion requires held-out BPB no worse than 0.85, at least 18/20
+sampled outputs grammatical and on topic for three sentences, no more than one
+sampled or two greedy loops, exact reload, and the same four-pass ceiling. EOS
+and public benchmark results remain diagnostics. Beyond 20 TPP requires a new
+evidence review, not an automatic extension.
 
 ### Rung 0007: constrained compact assistant
 
