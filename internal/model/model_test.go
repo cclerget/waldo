@@ -1365,6 +1365,33 @@ func TestTrainReusesPinnedStagePreflight(t *testing.T) {
 	}
 }
 
+func TestTrainReusesContentAddressedEvaluationSelectionAcrossModels(t *testing.T) {
+	root := t.TempDir()
+	var progress []Progress
+	builder := Builder{Root: root, Resolver: training.FakeResolver(), Progress: func(event Progress) { progress = append(progress, event) }}
+	for _, name := range []string{"selection-model-a", "selection-model-b"} {
+		if _, err := builder.Initialize(name, testArchitecture()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	prepared := preparedFixture(t, testStage("pretrain"))
+	if _, err := builder.Train(context.Background(), "selection-model-a", prepared); err != nil {
+		t.Fatal(err)
+	}
+	progress = nil
+	if _, err := builder.Train(context.Background(), "selection-model-b", prepared); err != nil {
+		t.Fatal(err)
+	}
+	var reused, rescanned bool
+	for _, event := range progress {
+		reused = reused || strings.Contains(event.Message, "reused cached evaluation selection")
+		rescanned = rescanned || strings.Contains(event.Message, "evaluation selection 1/")
+	}
+	if !reused || rescanned {
+		t.Fatalf("second model selection progress = %+v", progress)
+	}
+}
+
 func TestInspectRejectsTamperedStagePreflight(t *testing.T) {
 	root := t.TempDir()
 	builder := Builder{Root: root, NewID: func() (string, error) { return "preflight-run", nil }, Resolver: training.FakeResolver()}

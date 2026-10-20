@@ -16,10 +16,12 @@ import (
 	"fmt"
 	"math"
 	"math/bits"
+	"runtime"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/openwaldo/waldo/internal/record"
@@ -27,17 +29,19 @@ import (
 )
 
 type Record struct {
-	SelectionID  string               `json:"selection_id"`
-	ID           string               `json:"id"`
-	Text         string               `json:"text"`
-	Conversation *record.Conversation `json:"conversation,omitempty"`
-	Source       string               `json:"source"`
-	License      string               `json:"license"`
-	Language     string               `json:"language,omitempty"`
-	Corpus       string               `json:"corpus,omitempty"`
-	Tokens       []int                `json:"tokens,omitempty"`
-	LossMask     []bool               `json:"loss_mask,omitempty"`
-	decodeErr    error
+	SelectionID   string               `json:"selection_id"`
+	ID            string               `json:"id"`
+	Text          string               `json:"text"`
+	Conversation  *record.Conversation `json:"conversation,omitempty"`
+	Source        string               `json:"source"`
+	License       string               `json:"license"`
+	Language      string               `json:"language,omitempty"`
+	Corpus        string               `json:"corpus,omitempty"`
+	Tokens        []int                `json:"tokens,omitempty"`
+	LossMask      []bool               `json:"loss_mask,omitempty"`
+	decodeErr     error
+	tokenCount    int
+	tokensCounted bool
 }
 
 type RecordPartition struct {
@@ -296,6 +300,7 @@ func NewRecordPartitionFromPreflight(ctx context.Context, inputs []Input, parame
 type PartitionProgress struct {
 	CurrentShard int
 	TotalShards  int
+	Workers      int
 	Records      int64
 	Bytes        int64
 	TotalBytes   int64
@@ -336,6 +341,16 @@ func (values *evaluationHeap) Pop() any {
 	last := old[len(old)-1]
 	*values = old[:len(old)-1]
 	return last
+}
+
+type evaluationScanResult struct {
+	inputPosition    int
+	records          int64
+	skippedRecords   int64
+	includedLicenses map[string]int64
+	skippedLicenses  map[string]int64
+	candidates       []evaluationCandidate
+	err              error
 }
 
 func NewRecordPartition(inputs []Input, parameters ResolvedParameters) (RecordPartition, error) {
@@ -398,78 +413,78 @@ func NewRecordPartitionContextWithTransform(ctx context.Context, inputs []Input,
 	for _, input := range ordered {
 		totalBytes += input.Bytes
 	}
-	for inputPosition, input := range ordered {
-		if input.Records <= 0 {
-			return RecordPartition{}, fmt.Errorf("select evaluation records from shard %s: declared record count must be positive", input.SHA256)
-		}
-		physicalRecords, err := shard.RecordCount(input.Path)
-		if err != nil {
-			return RecordPartition{}, fmt.Errorf("read evaluation row count from shard %s: %w", input.SHA256, err)
-		}
-		if physicalRecords != input.Records {
-			return RecordPartition{}, fmt.Errorf("shard %s contains %d records, corpus BOM declares %d", input.SHA256, physicalRecords, input.Records)
-		}
-		addCandidate := func(row int64, license string) error {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			records++
-			partition.selectionSummary.IncludedRecords++
-			if license != "" {
-				if partition.selectionSummary.IncludedLicenses == nil {
-					partition.selectionSummary.IncludedLicenses = map[string]int64{}
+	workers := min(runtime.NumCPU(), len(ordered), 32)
+	scanContext, cancelScans := context.WithCancel(ctx)
+	defer cancelScans()
+	jobs := make(chan int)
+	results := make(chan evaluationScanResult, workers)
+	var scans sync.WaitGroup
+	scans.Add(workers)
+	for range workers {
+		go func() {
+			defer scans.Done()
+			for inputPosition := range jobs {
+				result := scanEvaluationInput(scanContext, ordered[inputPosition], inputPosition, parameters.Seed, policy, evaluationDisabled)
+				select {
+				case results <- result:
+				case <-scanContext.Done():
+					return
 				}
-				partition.selectionSummary.IncludedLicenses[license]++
+				if result.err != nil {
+					return
+				}
 			}
-			if input.Corpus != "" {
-				partition.eligibleRecords[input.Corpus]++
+		}()
+	}
+	go func() {
+		defer close(jobs)
+		for inputPosition := range ordered {
+			select {
+			case jobs <- inputPosition:
+			case <-scanContext.Done():
+				return
 			}
-			if evaluationDisabled {
-				return nil
-			}
-			key := selectionID(input.SHA256, row)
-			score := evaluationScore(parameters.Seed, key)
-			candidate := evaluationCandidate{key: key, corpus: input.Corpus, score: score, input: inputPosition, row: row}
+		}
+	}()
+	go func() {
+		scans.Wait()
+		close(results)
+	}()
+	completedShards := 0
+	for result := range results {
+		if result.err != nil {
+			cancelScans()
+			return RecordPartition{}, result.err
+		}
+		input := ordered[result.inputPosition]
+		records += result.records
+		partition.selectionSummary.IncludedRecords += result.records
+		partition.selectionSummary.SkippedRecords += result.skippedRecords
+		mergeRecordCounts(&partition.selectionSummary.IncludedLicenses, result.includedLicenses)
+		mergeRecordCounts(&partition.selectionSummary.SkippedLicenses, result.skippedLicenses)
+		if input.Corpus != "" {
+			partition.eligibleRecords[input.Corpus] += result.records
+		}
+		for _, candidate := range result.candidates {
 			candidateHeap := &candidates
 			if policy.Selection == "stratified-lowest-sha256-v1" {
-				candidateHeap = groupCandidates[input.Corpus]
+				candidateHeap = groupCandidates[candidate.corpus]
 				if candidateHeap == nil {
 					candidateHeap = &evaluationHeap{}
 					heap.Init(candidateHeap)
-					groupCandidates[input.Corpus] = candidateHeap
+					groupCandidates[candidate.corpus] = candidateHeap
 				}
 			}
-			if candidateHeap.Len() < policy.MaxRecords {
-				heap.Push(candidateHeap, candidate)
-			} else if bytes.Compare(score[:], (*candidateHeap)[0].score[:]) < 0 {
-				heap.Pop(candidateHeap)
-				heap.Push(candidateHeap, candidate)
-			}
-			return nil
+			pushEvaluationCandidate(candidateHeap, candidate, policy.MaxRecords)
 		}
-		if input.RecordFilter == nil {
-			for row := int64(0); row < input.Records; row++ {
-				if err := addCandidate(row, ""); err != nil {
-					return RecordPartition{}, err
-				}
-			}
-		} else if err := shard.WalkRecords(input.Path, func(row int64, view shard.RecordView) error {
-			if !inputAllows(input, view) {
-				partition.selectionSummary.SkippedRecords++
-				if partition.selectionSummary.SkippedLicenses == nil {
-					partition.selectionSummary.SkippedLicenses = map[string]int64{}
-				}
-				partition.selectionSummary.SkippedLicenses[selectionLicense(view.License)]++
-				return nil
-			}
-			return addCandidate(row, selectionLicense(view.License))
-		}); err != nil {
-			return RecordPartition{}, fmt.Errorf("apply record filters to shard %s: %w", input.SHA256, err)
-		}
+		completedShards++
 		completedBytes += input.Bytes
 		if progress != nil {
-			progress(PartitionProgress{CurrentShard: inputPosition + 1, TotalShards: len(ordered), Records: records, Bytes: completedBytes, TotalBytes: totalBytes})
+			progress(PartitionProgress{CurrentShard: completedShards, TotalShards: len(ordered), Workers: workers, Records: records, Bytes: completedBytes, TotalBytes: totalBytes})
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return RecordPartition{}, err
 	}
 	if records == 0 {
 		return RecordPartition{}, fmt.Errorf("record filters select no training records")
@@ -612,6 +627,88 @@ func NewRecordPartitionContextWithTransform(ctx context.Context, inputs []Input,
 	}
 	partition.selectionSummary.HeldOutRecords = int64(len(selected))
 	return partition, nil
+}
+
+func scanEvaluationInput(ctx context.Context, input Input, inputPosition int, seed uint64, policy *EvaluationPolicy, evaluationDisabled bool) evaluationScanResult {
+	result := evaluationScanResult{inputPosition: inputPosition}
+	if input.Records <= 0 {
+		result.err = fmt.Errorf("select evaluation records from shard %s: declared record count must be positive", input.SHA256)
+		return result
+	}
+	physicalRecords, err := shard.RecordCount(input.Path)
+	if err != nil {
+		result.err = fmt.Errorf("read evaluation row count from shard %s: %w", input.SHA256, err)
+		return result
+	}
+	if physicalRecords != input.Records {
+		result.err = fmt.Errorf("shard %s contains %d records, corpus BOM declares %d", input.SHA256, physicalRecords, input.Records)
+		return result
+	}
+	var candidates evaluationHeap
+	heap.Init(&candidates)
+	addCandidate := func(row int64, license string) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		result.records++
+		if license != "" {
+			if result.includedLicenses == nil {
+				result.includedLicenses = map[string]int64{}
+			}
+			result.includedLicenses[license]++
+		}
+		if evaluationDisabled {
+			return nil
+		}
+		key := selectionID(input.SHA256, row)
+		candidate := evaluationCandidate{key: key, corpus: input.Corpus, score: evaluationScore(seed, key), input: inputPosition, row: row}
+		pushEvaluationCandidate(&candidates, candidate, policy.MaxRecords)
+		return nil
+	}
+	if input.RecordFilter == nil {
+		for row := int64(0); row < input.Records; row++ {
+			if err := addCandidate(row, ""); err != nil {
+				result.err = err
+				return result
+			}
+		}
+	} else if err := shard.WalkRecords(input.Path, func(row int64, view shard.RecordView) error {
+		if !inputAllows(input, view) {
+			result.skippedRecords++
+			if result.skippedLicenses == nil {
+				result.skippedLicenses = map[string]int64{}
+			}
+			result.skippedLicenses[selectionLicense(view.License)]++
+			return nil
+		}
+		return addCandidate(row, selectionLicense(view.License))
+	}); err != nil {
+		result.err = fmt.Errorf("apply record filters to shard %s: %w", input.SHA256, err)
+		return result
+	}
+	result.candidates = append(result.candidates, candidates...)
+	return result
+}
+
+func pushEvaluationCandidate(values *evaluationHeap, candidate evaluationCandidate, limit int) {
+	if values.Len() < limit {
+		heap.Push(values, candidate)
+	} else if bytes.Compare(candidate.score[:], (*values)[0].score[:]) < 0 {
+		heap.Pop(values)
+		heap.Push(values, candidate)
+	}
+}
+
+func mergeRecordCounts(target *map[string]int64, source map[string]int64) {
+	if len(source) == 0 {
+		return
+	}
+	if *target == nil {
+		*target = map[string]int64{}
+	}
+	for key, value := range source {
+		(*target)[key] += value
+	}
 }
 
 func selectionLicense(value string) string {
@@ -990,7 +1087,11 @@ func addRecordCapacity(packer *sequenceCapacityPacker, record Record, codec Toke
 		return false, false, record.decodeErr
 	}
 	if record.Conversation == nil && objective == "causal-language-modeling" {
-		return true, packer.addFullySupervised(codec.Count(record.Text), requiredSequences), nil
+		tokenCount := record.tokenCount
+		if !record.tokensCounted {
+			tokenCount = codec.Count(record.Text)
+		}
+		return true, packer.addFullySupervised(tokenCount, requiredSequences), nil
 	}
 	tokens, mask, err := tokenizeRecord(record, codec, objective, conversation)
 	if err != nil {
@@ -1362,6 +1463,16 @@ func (source *canonicalRecordSource) streamBalancedEpoch(ctx context.Context, ep
 	streamContext, cancel := context.WithCancel(ctx)
 	defer cancel()
 	streams := make([]<-chan balancedRecord, 0, len(names))
+	codecs := make([]TokenCodec, len(names))
+	parallelTokenization := true
+	for index := range names {
+		cloned, err := cloneTokenCodec(source.codec)
+		if err != nil {
+			parallelTokenization = false
+			break
+		}
+		codecs[index] = cloned
+	}
 	for position, name := range names {
 		output := make(chan balancedRecord)
 		streams = append(streams, output)
@@ -1371,6 +1482,10 @@ func (source *canonicalRecordSource) streamBalancedEpoch(ctx context.Context, ep
 			groupSource := *source
 			groupSource.seed ^= uint64(groupPosition+1) * 0x9e3779b97f4a7c15
 			err := groupSource.streamInputGroup(streamContext, epoch, values, func(record Record) error {
+				if parallelTokenization {
+					record.tokenCount = codecs[groupPosition].Count(record.Text)
+					record.tokensCounted = true
+				}
 				select {
 				case destination <- balancedRecord{record: record}:
 					return nil
@@ -1409,10 +1524,14 @@ func (source *canonicalRecordSource) streamBalancedEpoch(ctx context.Context, ep
 			}
 		}
 		record := heads[selected].record
+		if !record.tokensCounted {
+			record.tokenCount = source.codec.Count(record.Text)
+			record.tokensCounted = true
+		}
 		if err := consume(record); err != nil {
 			return err
 		}
-		emitted[selected] += int64(source.codec.Count(record.Text)) + 1
+		emitted[selected] += int64(record.tokenCount) + 1
 		item, ok := <-streams[selected]
 		if !ok {
 			// A weighted epoch ends when its first corpus is exhausted. Draining

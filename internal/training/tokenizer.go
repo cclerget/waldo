@@ -132,6 +132,17 @@ func (byteCodec) Decode(tokens []int) string {
 	return string(decoded)
 }
 
+func cloneTokenCodec(codec TokenCodec) (TokenCodec, error) {
+	if _, ok := codec.(byteCodec); ok {
+		return byteCodec{}, nil
+	}
+	portable, ok := codec.(waldoTokenizer.Codec)
+	if !ok {
+		return nil, fmt.Errorf("cannot clone training tokenizer %T", codec)
+	}
+	return waldoTokenizer.CloneCodec(portable)
+}
+
 func ResolveTokenizer(name, revision string, vocabularySize uint64) (TokenizerSpec, TokenCodec, error) {
 	switch {
 	case name == "byte" && revision == ByteTokenizerRevision && vocabularySize == 259:

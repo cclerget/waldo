@@ -606,6 +606,14 @@ Setting any one of `evaluation_fraction`, `evaluation_max_records`, or
 `evaluation_max_bytes` to zero disables the held-out set and resolves all
 three values to zero.
 
+On the first use of a corpus/filter/tokenizer/seed/evaluation combination,
+WALDO must inspect every eligible record to produce the exact deterministic
+lowest-hash held-out set. Shards are scanned in parallel. The resulting small
+selection artifact is content-addressed under the model root and reused by
+later models and token-budget variants, so the full selection scan is not
+repeated. Fixed-token stages then make a separate packing-capacity pass only
+until they have proved that the requested training budget is available.
+
 `contiguous-tail-v1` is the narrow single-stream control for corpora such as
 Tiny Shakespeare. Its UTF-8 byte boundary, canonical row identity, held-out
 byte count, and tokenizer targets are pinned in stage preflight. It does not

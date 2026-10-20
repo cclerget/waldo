@@ -237,6 +237,13 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 	if err != nil {
 		return Inspection{}, err
 	}
+	selectionIdentity, err := hashJSON(stageSelectionIdentity{
+		Schema: 1, ArchitectureSHA256: inspection.Model.ArchitectureSHA256, CorpusBOMSHA256: bomHash,
+		Objective: stage.Objective, Conversation: conversation, Seed: resolvedParameters.Seed, Evaluation: resolvedParameters.Evaluation,
+	})
+	if err != nil {
+		return Inspection{}, err
+	}
 	var partition training.RecordPartition
 	var preflight training.StagePreflight
 	capacityVerified := false
@@ -260,22 +267,39 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 			builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("reused verified capacity for %d optimizer steps", resolvedParameters.Steps)})
 		}
 	} else {
-		selectionMessage := fmt.Sprintf("selecting deterministic held-out records across %d shards", len(prepared.Inputs))
-		if stage.Parameters.Tokens > 0 {
-			selectionMessage = fmt.Sprintf("1/3 applying corpus filters and excluding held-out records across %d shards", len(prepared.Inputs))
+		selectionCached := false
+		if cached, ok, loadErr := builder.loadStageSelection(selectionIdentity); loadErr != nil {
+			return Inspection{}, fmt.Errorf("stage %s cached evaluation selection: %w", stage.Name, loadErr)
+		} else if ok {
+			partition, err = training.NewRecordPartitionFromPreflight(ctx, prepared.Inputs, resolvedParameters, codec, stage.Objective, conversation, cached)
+			if err != nil {
+				return Inspection{}, fmt.Errorf("stage %s cached evaluation selection: %w", stage.Name, err)
+			}
+			selectionCached = true
+			builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("reused cached evaluation selection with %d held-out records; no shard scan required", partition.Evaluation.Records)})
 		}
-		builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: selectionMessage})
-		partition, err = training.NewRecordPartitionContextWithTransform(ctx, prepared.Inputs, resolvedParameters, codec, stage.Objective, conversation, func(event training.PartitionProgress) {
-			builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("evaluation selection %d/%d shards, %d records indexed", event.CurrentShard, event.TotalShards, event.Records)})
-		})
-		if err != nil {
-			return Inspection{}, fmt.Errorf("stage %s held-out evaluation partition: %w", stage.Name, err)
+		if !selectionCached {
+			selectionMessage := fmt.Sprintf("selecting deterministic held-out records across %d shards", len(prepared.Inputs))
+			if stage.Parameters.Tokens > 0 {
+				selectionMessage = fmt.Sprintf("1/3 applying corpus filters and excluding held-out records across %d shards", len(prepared.Inputs))
+			}
+			builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: selectionMessage})
+			partition, err = training.NewRecordPartitionContextWithTransform(ctx, prepared.Inputs, resolvedParameters, codec, stage.Objective, conversation, func(event training.PartitionProgress) {
+				builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("evaluation selection %d/%d shards with %d parallel workers, %d records indexed", event.CurrentShard, event.TotalShards, event.Workers, event.Records)})
+			})
+			if err != nil {
+				return Inspection{}, fmt.Errorf("stage %s held-out evaluation partition: %w", stage.Name, err)
+			}
+			evaluationKind := "held-out records"
+			if resolvedParameters.Evaluation != nil && resolvedParameters.Evaluation.Selection == "contiguous-tail-v1" {
+				evaluationKind = "partially held-out records"
+			}
+			builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("selected %d %s (%s text)", partition.Evaluation.Records, evaluationKind, byteCount(partition.Evaluation.TextBytes))})
+			selectionSnapshot := partition.Preflight(selectionIdentity, resolvedParameters, false)
+			if err := builder.storeStageSelection(selectionSnapshot); err != nil {
+				return Inspection{}, fmt.Errorf("stage %s cache evaluation selection: %w", stage.Name, err)
+			}
 		}
-		evaluationKind := "held-out records"
-		if resolvedParameters.Evaluation != nil && resolvedParameters.Evaluation.Selection == "contiguous-tail-v1" {
-			evaluationKind = "partially held-out records"
-		}
-		builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("selected %d %s (%s text)", partition.Evaluation.Records, evaluationKind, byteCount(partition.Evaluation.TextBytes))})
 		if stage.Parameters.Steps == 0 && stage.Parameters.Tokens == 0 {
 			builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("deriving optimizer steps from %d epochs", resolvedParameters.Epochs)})
 			derivedSteps, err := partition.TrainingSteps(ctx)
@@ -520,6 +544,55 @@ type stagePreflightIdentity struct {
 	Objective          string                         `json:"objective"`
 	Conversation       training.ConversationTransform `json:"conversation,omitzero"`
 	Parameters         training.ResolvedParameters    `json:"parameters"`
+}
+
+type stageSelectionIdentity struct {
+	Schema             int                            `json:"schema"`
+	ArchitectureSHA256 string                         `json:"architecture_sha256"`
+	CorpusBOMSHA256    string                         `json:"corpus_bom_sha256"`
+	Objective          string                         `json:"objective"`
+	Conversation       training.ConversationTransform `json:"conversation,omitzero"`
+	Seed               uint64                         `json:"seed"`
+	Evaluation         *training.EvaluationPolicy     `json:"evaluation,omitempty"`
+}
+
+func (builder Builder) stageSelectionPath(identity string) string {
+	if builder.Root == "" {
+		return ""
+	}
+	// Selection evidence is small, reusable model metadata rather than prepared
+	// sequence data. Keep it under the durable model root so normal lookaside
+	// scratch cleanup cannot discard an hours-long deterministic scan.
+	return filepath.Join(builder.Root, ".waldo-preflight", "stage-selection", identity+".json")
+}
+
+func (builder Builder) loadStageSelection(identity string) (training.StagePreflight, bool, error) {
+	path := builder.stageSelectionPath(identity)
+	if path == "" {
+		return training.StagePreflight{}, false, nil
+	}
+	var snapshot training.StagePreflight
+	if err := readStrictJSON(path, &snapshot); err != nil {
+		if os.IsNotExist(err) {
+			return training.StagePreflight{}, false, nil
+		}
+		return training.StagePreflight{}, false, err
+	}
+	if err := snapshot.Validate(); err != nil {
+		return training.StagePreflight{}, false, err
+	}
+	if snapshot.IdentitySHA256 != identity {
+		return training.StagePreflight{}, false, fmt.Errorf("cached selection identity differs")
+	}
+	return snapshot, true, nil
+}
+
+func (builder Builder) storeStageSelection(snapshot training.StagePreflight) error {
+	path := builder.stageSelectionPath(snapshot.IdentitySHA256)
+	if path == "" {
+		return nil
+	}
+	return writeJSONAtomic(path, snapshot)
 }
 
 func reusableStagePreflight(inspection Inspection, identity string) (training.StagePreflight, int, bool, error) {

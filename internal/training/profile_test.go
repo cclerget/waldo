@@ -877,6 +877,35 @@ func TestMinimumEpochsPreservesWeightedEpochExhaustion(t *testing.T) {
 	}
 }
 
+func TestWeightedCapacityCountsEachConsumedRecordOnce(t *testing.T) {
+	first := writeTrainingShard(t, []string{"a1", "a2", "a3", "a4"})
+	first.Corpus = "corpus-a"
+	second := writeTrainingShard(t, []string{"b1", "b2", "b3", "b4"})
+	second.Corpus = "corpus-b"
+	parameters, err := ResolveParameters(Parameters{Profile: WeightedProfile, Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, Seed: 42, CorpusWeights: map[string]uint64{"corpus-a": 1, "corpus-b": 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	codec := &countingTokenCodec{}
+	value, err := NewCanonicalRecordSourceWithTokenizer([]Input{first, second}, parameters, codec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := &recordingEpochSource{source: value.(*canonicalRecordSource)}
+	if _, err := minimumEpochsForSequences(context.Background(), recorder, codec, "causal-language-modeling", ConversationTransform{}, int(parameters.SequenceLength), 1, 1, nil); err != nil {
+		t.Fatal(err)
+	}
+	consumed := 0
+	for _, counts := range recorder.counts {
+		for _, count := range counts {
+			consumed += count
+		}
+	}
+	if codec.counts != consumed {
+		t.Fatalf("tokenizer counts = %d, consumed records = %d; capacity planning counted a record more than once", codec.counts, consumed)
+	}
+}
+
 func TestMinimumEpochsIncrementalCapacityIsDeterministic(t *testing.T) {
 	run := func() (int64, []CapacityProgress) {
 		source := &trackedEpochSource{records: []Record{{Text: "abc"}}}
