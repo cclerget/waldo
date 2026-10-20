@@ -320,6 +320,7 @@ type DataPlan struct {
 	ShuffleBufferBytes   int64             `json:"shuffle_buffer_bytes"`
 	Packing              string            `json:"packing"`
 	CorpusWeights        map[string]uint64 `json:"corpus_weights,omitempty"`
+	RepeatUntilSteps     bool              `json:"repeat_until_steps,omitempty"`
 }
 
 type EvaluationPolicy struct {

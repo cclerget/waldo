@@ -42,7 +42,7 @@ func TestPromotedReference(t *testing.T) {
 		t.Fatalf("tokenizer changed: %+v", tokenizer)
 	}
 	parameters := compose.Stages[0].Parameters
-	if parameters.Profile != "causal-pretrain-shuffled" || parameters.Tokens != 613611520 || parameters.BatchSize != 12 || parameters.GradientAccumulation != 3 || parameters.SequenceLength != 512 || parameters.LearningRate != 0.0006 || parameters.Optimizer != "adamw" || parameters.Schedule != "cosine" || parameters.Seed != 42 || parameters.EvaluationSelection != "lowest-sha256-v1" {
+	if parameters.Profile != "causal-pretrain-shuffled" || parameters.Tokens != 613611520 || parameters.BatchSize != 12 || parameters.GradientAccumulation != 3 || parameters.SequenceLength != 512 || parameters.LearningRate != 0.0006 || parameters.Optimizer != "adamw" || parameters.Schedule != "cosine" || parameters.Seed != 42 || parameters.EvaluationSelection != "indexed-sample-v1" {
 		t.Fatalf("training controls changed: %+v", parameters)
 	}
 	resolved, err := compose.Stages[0].ResolvePlanningParameters()

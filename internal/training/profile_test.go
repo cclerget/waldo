@@ -34,7 +34,7 @@ func TestResolveParametersPinsVersionedDefaultsAndOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved.Profile != DefaultProfile || resolved.ProfileSchema != 1 || resolved.Epochs != 1 || resolved.Optimizer.Name != "adamw" || resolved.Optimizer.WeightDecay != 0.1 || resolved.Schedule.Name != "cosine" || resolved.Schedule.WarmupSteps != 100 || resolved.Data.Order != "bounded-shuffle-v1" || resolved.Data.Packing != "continuous-eos-v1" || resolved.Evaluation == nil || resolved.Evaluation.Selection != "lowest-sha256-v1" || resolved.Evaluation.Fraction != 0.01 || resolved.Evaluation.MaxRecords != 256 || resolved.Evaluation.MaxBytes != 1024*1024 || resolved.CheckpointEvery != 500 || resolved.EvaluateEvery != 500 || resolved.PlannedTokenCapacity != 4_096_000 {
+	if resolved.Profile != DefaultProfile || resolved.ProfileSchema != 1 || resolved.Epochs != 1 || resolved.Optimizer.Name != "adamw" || resolved.Optimizer.WeightDecay != 0.1 || resolved.Schedule.Name != "cosine" || resolved.Schedule.WarmupSteps != 100 || resolved.Data.Order != "bounded-shuffle-v1" || resolved.Data.Packing != "continuous-eos-v1" || resolved.Evaluation == nil || resolved.Evaluation.Selection != "indexed-sample-v1" || resolved.Evaluation.Fraction != 0.01 || resolved.Evaluation.MaxRecords != 256 || resolved.Evaluation.MaxBytes != 1024*1024 || resolved.CheckpointEvery != 500 || resolved.EvaluateEvery != 500 || resolved.PlannedTokenCapacity != 4_096_000 {
 		t.Fatalf("resolved = %+v", resolved)
 	}
 	encoded, err := json.Marshal(resolved)
@@ -94,7 +94,7 @@ func TestResolveParametersSupportsTokenAndEpochBudgets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved.RequestedTokens != 101 || resolved.Steps != 7 || resolved.PlannedTokenCapacity != 112 {
+	if resolved.RequestedTokens != 101 || resolved.Steps != 7 || resolved.PlannedTokenCapacity != 112 || !resolved.Data.RepeatUntilSteps {
 		t.Fatalf("token budget = %+v", resolved)
 	}
 	for _, invalid := range []Parameters{
@@ -125,7 +125,7 @@ func TestBalancedProfilePinsCorpusBalancedDataAndEvaluation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved.ProfileSchema != 1 || resolved.Data.Order != "corpus-balanced-shuffle-v1" || resolved.Evaluation == nil || resolved.Evaluation.Selection != "stratified-lowest-sha256-v1" {
+	if resolved.ProfileSchema != 1 || resolved.Data.Order != "corpus-balanced-shuffle-v1" || resolved.Evaluation == nil || resolved.Evaluation.Selection != "stratified-indexed-sample-v1" {
 		t.Fatalf("balanced profile = %+v", resolved)
 	}
 }
@@ -202,9 +202,13 @@ func TestRecordPartitionPinsAndExcludesHeldOutRecords(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := NewRecordPartition(inputs, parameters)
+	progressCalls := 0
+	first, err := NewRecordPartitionWithProgress(inputs, parameters, func(PartitionProgress) { progressCalls++ })
 	if err != nil {
 		t.Fatal(err)
+	}
+	if progressCalls != 0 {
+		t.Fatalf("indexed evaluation scanned the corpus and reported %d progress events", progressCalls)
 	}
 	second, err := NewRecordPartition(inputs, parameters)
 	if err != nil {
@@ -310,7 +314,7 @@ func TestRecordFiltersApplyToPartitionTargetsAndTrainingStream(t *testing.T) {
 	zeroFraction := 0.0
 	zeroRecords := 0
 	zeroBytes := int64(0)
-	parameters, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, Seed: 42, EvaluationFraction: &zeroFraction, EvaluationMaxRecords: &zeroRecords, EvaluationMaxBytes: &zeroBytes})
+	parameters, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, Seed: 42, EvaluationSelection: "lowest-sha256-v1", EvaluationFraction: &zeroFraction, EvaluationMaxRecords: &zeroRecords, EvaluationMaxBytes: &zeroBytes})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -428,7 +432,7 @@ func TestRecordPartitionReportsScanProgress(t *testing.T) {
 		writeTrainingShard(t, []string{"one", "two"}),
 		writeTrainingShard(t, []string{"three"}),
 	}
-	parameters, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, Seed: 42})
+	parameters, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, Seed: 42, EvaluationSelection: "lowest-sha256-v1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -473,6 +477,69 @@ func TestCanonicalRecordSourceIsDeterministicAndComplete(t *testing.T) {
 	sort.Strings(other)
 	if !reflect.DeepEqual(sorted, other) {
 		t.Fatalf("record sets differ: %v, %v", sorted, other)
+	}
+}
+
+func TestTokenBudgetCanonicalRecordSourceRepeatsUntilConsumerStops(t *testing.T) {
+	inputs := []Input{writeTrainingShard(t, []string{"one", "two"})}
+	parameters, err := ResolveParameters(Parameters{Tokens: 128, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, Seed: 42})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := NewCanonicalRecordSource(inputs, parameters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stop := errors.New("enough records")
+	var records int
+	err = source.Stream(context.Background(), func(Record) error {
+		records++
+		if records == 5 {
+			return stop
+		}
+		return nil
+	})
+	if !errors.Is(err, stop) || records != 5 {
+		t.Fatalf("repeating stream stopped after %d records with %v", records, err)
+	}
+}
+
+func TestIndexedEvaluationAppliesFiltersDuringStreamingWithoutCorpusScan(t *testing.T) {
+	var rows []shard.Row
+	for index := 0; index < 100; index++ {
+		language := "en"
+		if index%2 == 0 {
+			language = "fr"
+		}
+		text := fmt.Sprintf("record-%03d", index)
+		rows = append(rows, shard.Row{SHA256: record.TextHash(text), Kind: record.KindPretrain, Text: text, Source: "fixture", License: "CC0-1.0", Lang: language, Tokens: 1})
+	}
+	input := writeTrainingRows(t, rows)
+	input.Corpus = "example"
+	input.RecordFilter = &corpus.RecordFilterPolicy{Schema: corpus.RecordFilterSchema, Global: &corpus.RecordFilter{Languages: &corpus.ValueFilter{Include: []string{"en"}}}}
+	parameters, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, Seed: 42})
+	if err != nil {
+		t.Fatal(err)
+	}
+	progressCalls := 0
+	partition, err := NewRecordPartitionWithProgress([]Input{input}, parameters, func(PartitionProgress) { progressCalls++ })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if progressCalls != 0 {
+		t.Fatalf("indexed evaluation scanned the filtered corpus and reported %d progress events", progressCalls)
+	}
+	source, err := partition.TrainingRecords()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := source.Stream(context.Background(), func(value Record) error {
+		if !strings.HasSuffix(value.Text, "1") && !strings.HasSuffix(value.Text, "3") && !strings.HasSuffix(value.Text, "5") && !strings.HasSuffix(value.Text, "7") && !strings.HasSuffix(value.Text, "9") {
+			t.Fatalf("filter admitted non-English row %q", value.Text)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -1027,7 +1094,7 @@ func TestStagePreflightRecordsCorporaEliminatedByFilters(t *testing.T) {
 	filtered.RecordFilter = &corpus.RecordFilterPolicy{Schema: corpus.RecordFilterSchema, Global: &corpus.RecordFilter{Languages: &corpus.ValueFilter{Include: []string{"en"}}}}
 	retained := writeTrainingShard(t, []string{"retained one", "retained two"})
 	retained.Corpus = "retained-corpus"
-	parameters, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, Seed: 7})
+	parameters, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, Seed: 7, EvaluationSelection: "lowest-sha256-v1"})
 	if err != nil {
 		t.Fatal(err)
 	}

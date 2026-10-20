@@ -360,10 +360,11 @@ The tokenizer name, revision, and vocabulary size are one exact contract:
 | `waldo/byte-bpe` | artifact revision | artifact vocabulary | Corpus-trained byte-level BPE vocabulary selected with `tokenizer.artifact_path`. |
 | `waldo/bytepiece` | artifact revision | artifact vocabulary | Read-only compatibility for schema-1 artifacts; new training never creates this format. |
 
-WALDO performs tokenization before the framework worker, ensuring supported
-backends receive identical token IDs. A trained artifact is expanded into the
-saved architecture, so secondary hosts and later inference do not depend on a
-machine-local tokenizer path.
+WALDO tokenizes the canonical Parquet stream on demand while the framework
+worker is running, ensuring supported backends receive identical token IDs
+without requiring a separate full-corpus preprocessing pass. A trained
+artifact is expanded into the saved architecture, so secondary hosts and later
+inference do not depend on a machine-local tokenizer path.
 
 ### Tokenizer training fields
 
@@ -537,10 +538,13 @@ indexed reference totals; run and evaluation evidence describe actual training
 consumption. If the combined filters eliminate every row from one selected
 corpus, preflight warns that the corpus will contribute zero training tokens.
 
-After each successful stage, WALDO prints the input, included, fully held-out,
-partially held-out, and skipped record counts. When filtering required a row scan, it also prints
-included and skipped counts grouped by effective license. The same selection
-accounting is preserved in the stage preflight artifact.
+When an exact policy scans the rows, WALDO prints the input, included, fully
+held-out, partially held-out, and skipped record counts after the successful
+stage. It also prints included and skipped counts grouped by effective license,
+and preserves that selection accounting in the stage preflight artifact. The
+default indexed policy deliberately avoids that scan, so it reports and pins
+the bounded held-out sample while actual per-corpus token consumption remains
+the authoritative evidence for streamed training.
 The corpus remains in the selection BOM for auditability, while observed
 consumption lists only corpora that supplied positive token targets.
 
@@ -554,7 +558,7 @@ must use one representation or the other, never both.
 | --- | --- | --- | --- |
 | `profile` | no | `causal-pretrain-shuffled` | Selects versioned record ordering, corpus exposure, and held-out selection. |
 | `parallelism` | no | `auto` | TorchTitan placement: `auto`, `data-parallel`, `hybrid-sharded-data-parallel`, or `fully-sharded-data-parallel`. The resolved placement is pinned in the run BOM. |
-| `tokens` | one training budget | positive integer | Fixed training target budget. WALDO rounds it up to a complete optimizer step and preflights the minimum deterministic corpus-pass count needed to supply it. Cannot be combined with `epochs` or `steps`. |
+| `tokens` | one training budget | positive integer | Fixed training target budget. WALDO rounds it up to a complete optimizer step, then filters, tokenizes, and packs Parquet rows while training runs until the budget is met. Cannot be combined with `epochs` or `steps`. |
 | `epochs` | one training budget | `1..1000000` | Complete deterministic passes over every selected canonical record. When `steps` is omitted, WALDO derives the exact optimizer-step count after filtering and held-out selection. |
 | `steps` | legacy/fixed-step budget | positive integer | Explicit optimizer steps and learning-rate schedule length. Retained for existing composes and exact fixed-step experiments; it may be combined with `epochs` as a repetition limit. |
 | `batch_size` | yes | positive integer | Global number of packed sequences in each optimizer step. Multi-GPU training partitions these sequences across ranks, so the value must be at least and evenly divisible by the aggregate GPU count. |
@@ -577,7 +581,7 @@ must use one representation or the other, never both.
 | `shuffle_buffer_records` | no | default `1024`; `1..1000000` | Maximum records retained by deterministic bounded shuffle. |
 | `shuffle_buffer_bytes` | no | default 64 MiB; `1 B..16 GiB` | Maximum record text retained by deterministic bounded shuffle. |
 | `corpus_weights` | only for `causal-pretrain-weighted`; legacy form | each weight `1..1000000` | Integer relative token exposure keyed by every selected corpus path. Configured corpus `weight` fields are preferred. |
-| `evaluation_selection` | no | Profile default | `lowest-sha256-v1` and `stratified-lowest-sha256-v1` hold out complete records. `contiguous-tail-v1` requires the shuffled profile and exactly one eligible text record; it trains on the leading portion and evaluates the trailing `evaluation_fraction`. |
+| `evaluation_selection` | no | Profile default | `indexed-sample-v1` and `stratified-indexed-sample-v1` use bounded deterministic direct row reads and are the defaults. Legacy `lowest-sha256-v1` policies perform an exact full eligible-row scan. `contiguous-tail-v1` requires the shuffled profile and exactly one eligible text record; it trains on the leading portion and evaluates the trailing `evaluation_fraction`. |
 | `evaluation_fraction` | no | default `0.01`; `0 <= value < 1` | Candidate fraction for deterministic held-out selection. |
 | `evaluation_max_records` | no | default `256`; `0..1000000` | Held-out record cap. |
 | `evaluation_max_bytes` | no | default 1 MiB; `0 B..16 GiB` | Held-out text-byte cap. |
@@ -595,8 +599,10 @@ derived_steps * batch_size * sequence_length
 Records are continuously packed with an EOS token between records; document
 boundaries do not force padding to a new sequence. Epoch-driven stages scan the
 finite filtered stream and derive their exact steps before creating a run.
-Fixed-token stages derive steps before scanning, then preflight and persist the
-minimum complete deterministic source-pass count needed to reach that budget.
+Fixed-token stages derive steps from the requested budget without scanning.
+Their canonical Parquet rows are filtered, tokenized, and packed on demand,
+with deterministic passes repeated until the worker receives the requested
+number of optimizer steps.
 Legacy stages declaring both fields verify that their epochs contain enough
 packed targets to reach the requested steps. An impossible run fails during
 preflight rather than after accelerator work begins or by silently shortening
@@ -606,13 +612,19 @@ Setting any one of `evaluation_fraction`, `evaluation_max_records`, or
 `evaluation_max_bytes` to zero disables the held-out set and resolves all
 three values to zero.
 
-On the first use of a corpus/filter/tokenizer/seed/evaluation combination,
-WALDO must inspect every eligible record to produce the exact deterministic
-lowest-hash held-out set. Shards are scanned in parallel. The resulting small
-selection artifact is content-addressed under the model root and reused by
-later models and token-budget variants, so the full selection scan is not
-repeated. Fixed-token stages then make a separate packing-capacity pass only
-until they have proved that the requested training budget is available.
+The default indexed evaluation policies derive deterministic row positions
+from the pinned shard record counts and seed, then read only a bounded sample
+of complete rows. License and content filters are applied to those candidates;
+the selected identities and evaluation evidence are pinned before training.
+There is no corpus-wide evaluation scan. The `stratified-` form distributes
+candidates across logical corpus paths. The small selection artifact is
+content-addressed under the model root and can be reused by later models and
+token-budget variants.
+
+The legacy `lowest-sha256-v1` and `stratified-lowest-sha256-v1` policies remain
+available when an exact lowest-hash selection over every eligible row is
+required. They scan all selected rows on first use and cache the result. They
+should not be used accidentally for petabyte-scale training.
 
 `contiguous-tail-v1` is the narrow single-stream control for corpora such as
 Tiny Shakespeare. Its UTF-8 byte boundary, canonical row identity, held-out
@@ -636,9 +648,9 @@ contract rather than an ignored compose field.
 
 | Profile | Training record order | Held-out selection | Corpus weights |
 | --- | --- | --- | --- |
-| `causal-pretrain-shuffled` | One bounded deterministic shuffle across the selection. | Deterministic lowest SHA-256 candidates across the selection. | Not accepted. |
-| `causal-pretrain-balanced` | Balances emitted tokenizer targets equally across logical corpus paths, with bounded shuffle within each. | Deterministically stratified across corpus paths. | Not accepted. |
-| `causal-pretrain-weighted` | Selects the corpus with the lowest emitted-target-to-declared-weight ratio, with bounded shuffle within each. | Deterministically stratified across corpus paths. | Required for every selected corpus. |
+| `causal-pretrain-shuffled` | One bounded deterministic shuffle across the selection. | Deterministic bounded indexed sample across the selection. | Not accepted. |
+| `causal-pretrain-balanced` | Balances emitted tokenizer targets equally across logical corpus paths, with bounded shuffle within each. | Deterministic bounded indexed sample stratified across corpus paths. | Not accepted. |
+| `causal-pretrain-weighted` | Selects the corpus with the lowest emitted-target-to-declared-weight ratio, with bounded shuffle within each. | Deterministic bounded indexed sample stratified across corpus paths. | Required for every selected corpus. |
 
 Each named profile currently has `profile_schema: 1` in the resolved run BOM.
 That field versions the behavior contract independently; it is not a model

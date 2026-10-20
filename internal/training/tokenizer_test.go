@@ -8,6 +8,7 @@ package training
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -115,6 +116,22 @@ func TestTokenizedRecordSourceRemovesRawText(t *testing.T) {
 	if err := source.Stream(t.Context(), func(record Record) error {
 		if record.Text != "" || len(record.Tokens) == 0 || record.Corpus != "example" {
 			t.Fatalf("tokenized record = %+v", record)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTokenizedRecordSourceReusesPreparedCausalTokens(t *testing.T) {
+	source := tokenizedRecordSource{
+		source:    staticRecordSource{{Text: "raw text must not be encoded", preparedTokens: []int{10, 11}, Corpus: "example"}},
+		codec:     nil,
+		objective: "causal-language-modeling",
+	}
+	if err := source.Stream(t.Context(), func(record Record) error {
+		if !reflect.DeepEqual(record.Tokens, []int{10, 11}) || !reflect.DeepEqual(record.LossMask, []bool{true, true, true}) || record.Text != "" || record.preparedTokens != nil {
+			t.Fatalf("prepared token record = %+v", record)
 		}
 		return nil
 	}); err != nil {

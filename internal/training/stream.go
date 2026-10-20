@@ -29,19 +29,20 @@ import (
 )
 
 type Record struct {
-	SelectionID   string               `json:"selection_id"`
-	ID            string               `json:"id"`
-	Text          string               `json:"text"`
-	Conversation  *record.Conversation `json:"conversation,omitempty"`
-	Source        string               `json:"source"`
-	License       string               `json:"license"`
-	Language      string               `json:"language,omitempty"`
-	Corpus        string               `json:"corpus,omitempty"`
-	Tokens        []int                `json:"tokens,omitempty"`
-	LossMask      []bool               `json:"loss_mask,omitempty"`
-	decodeErr     error
-	tokenCount    int
-	tokensCounted bool
+	SelectionID    string               `json:"selection_id"`
+	ID             string               `json:"id"`
+	Text           string               `json:"text"`
+	Conversation   *record.Conversation `json:"conversation,omitempty"`
+	Source         string               `json:"source"`
+	License        string               `json:"license"`
+	Language       string               `json:"language,omitempty"`
+	Corpus         string               `json:"corpus,omitempty"`
+	Tokens         []int                `json:"tokens,omitempty"`
+	LossMask       []bool               `json:"loss_mask,omitempty"`
+	decodeErr      error
+	tokenCount     int
+	tokensCounted  bool
+	preparedTokens []int
 }
 
 type RecordPartition struct {
@@ -73,7 +74,7 @@ type RecordSelectionSummary struct {
 
 const (
 	StagePreflightKind   = "openwaldo-stage-preflight"
-	StagePreflightSchema = 2
+	StagePreflightSchema = 3
 )
 
 type EvaluationSplit struct {
@@ -81,8 +82,8 @@ type EvaluationSplit struct {
 	ByteOffset  int64  `json:"byte_offset"`
 }
 
-// StagePreflight is the immutable result of the expensive, deterministic
-// record-partition scan. The model run BOM pins the serialized artifact.
+// StagePreflight is the immutable result of deterministic record partitioning.
+// The model run BOM pins the serialized artifact.
 type StagePreflight struct {
 	Kind             string                 `json:"kind"`
 	Schema           int                    `json:"schema"`
@@ -396,15 +397,23 @@ func NewRecordPartitionContextWithTransform(ctx context.Context, inputs []Input,
 		policy = &EvaluationPolicy{Selection: "none-v1"}
 	}
 	evaluationDisabled := policy.Fraction == 0 || policy.MaxRecords == 0 || policy.MaxBytes == 0
-	if evaluationDisabled && !inputsHaveRecordFilters(ordered) {
-		for _, input := range ordered {
-			if input.Corpus != "" {
-				partition.eligibleRecords[input.Corpus] += input.Records
+	if evaluationDisabled && (!inputsHaveRecordFilters(ordered) || IsIndexedEvaluationSelection(policy.Selection)) {
+		if !inputsHaveRecordFilters(ordered) {
+			for _, input := range ordered {
+				if input.Corpus != "" {
+					partition.eligibleRecords[input.Corpus] += input.Records
+				}
 			}
+			partition.selectionSummary.IncludedRecords = partition.selectionSummary.InputRecords
+		} else {
+			partition.eligibleRecords = nil
+			partition.selectionSummary = RecordSelectionSummary{}
 		}
-		partition.selectionSummary.IncludedRecords = partition.selectionSummary.InputRecords
 		partition.Evaluation = EvaluationSet{Selection: policy.Selection, Seed: parameters.Seed, SHA256: emptyEvaluationDigest()}
 		return partition, nil
+	}
+	if !evaluationDisabled && IsIndexedEvaluationSelection(policy.Selection) {
+		return newIndexedRecordPartition(ctx, partition, policy, codec, objective, conversation)
 	}
 	var candidates evaluationHeap
 	heap.Init(&candidates)
@@ -627,6 +636,211 @@ func NewRecordPartitionContextWithTransform(ctx context.Context, inputs []Input,
 	}
 	partition.selectionSummary.HeldOutRecords = int64(len(selected))
 	return partition, nil
+}
+
+// IsIndexedEvaluationSelection reports whether a policy selects held-out rows
+// with bounded direct Parquet reads instead of enumerating the corpus.
+func IsIndexedEvaluationSelection(selection string) bool {
+	return selection == "indexed-sample-v1" || selection == "stratified-indexed-sample-v1"
+}
+
+type indexedInputGroup struct {
+	name    string
+	inputs  []int
+	records int64
+}
+
+type indexedCandidate struct {
+	evaluationCandidate
+	order  int
+	record Record
+}
+
+func newIndexedRecordPartition(ctx context.Context, partition RecordPartition, policy *EvaluationPolicy, codec TokenCodec, objective string, conversation ConversationTransform) (RecordPartition, error) {
+	var totalRecords int64
+	groupsByName := map[string]*indexedInputGroup{}
+	for inputPosition, input := range partition.inputs {
+		if input.Records <= 0 || totalRecords > math.MaxInt64-input.Records {
+			return RecordPartition{}, fmt.Errorf("select indexed evaluation rows from shard %s: declared record count is invalid", input.SHA256)
+		}
+		totalRecords += input.Records
+		name := ""
+		if policy.Selection == "stratified-indexed-sample-v1" {
+			name = input.Corpus
+			if name == "" {
+				return RecordPartition{}, fmt.Errorf("stratified indexed evaluation requires corpus identity for shard %s", input.SHA256)
+			}
+		}
+		group := groupsByName[name]
+		if group == nil {
+			group = &indexedInputGroup{name: name}
+			groupsByName[name] = group
+		}
+		group.inputs = append(group.inputs, inputPosition)
+		group.records += input.Records
+	}
+	if totalRecords < 2 {
+		partition.eligibleRecords = nil
+		partition.selectionSummary = RecordSelectionSummary{}
+		partition.Evaluation = EvaluationSet{Selection: policy.Selection, Seed: partition.parameters.Seed, SHA256: emptyEvaluationDigest()}
+		return partition, nil
+	}
+	desired := desiredEvaluationRecords(totalRecords, policy.Fraction, policy.MaxRecords)
+	if desired < 1 {
+		return RecordPartition{}, fmt.Errorf("indexed evaluation policy selects no held-out records")
+	}
+	groups := make([]*indexedInputGroup, 0, len(groupsByName))
+	for _, group := range groupsByName {
+		groups = append(groups, group)
+	}
+	sort.Slice(groups, func(i, j int) bool { return groups[i].name < groups[j].name })
+	perGroupTarget := (desired + len(groups) - 1) / len(groups)
+	candidateGroups := make([][]evaluationCandidate, len(groups))
+	maxRounds := 0
+	for groupPosition, group := range groups {
+		probeLimit := int64(max(1024, perGroupTarget*16))
+		probeLimit = min(probeLimit, group.records)
+		candidateGroups[groupPosition] = indexedEvaluationCandidates(partition.inputs, *group, partition.parameters.Seed, int(probeLimit))
+		maxRounds = max(maxRounds, len(candidateGroups[groupPosition]))
+	}
+	var candidates []indexedCandidate
+	for round := 0; round < maxRounds; round++ {
+		for groupPosition := range candidateGroups {
+			if round >= len(candidateGroups[groupPosition]) {
+				continue
+			}
+			candidate := candidateGroups[groupPosition][round]
+			candidates = append(candidates, indexedCandidate{evaluationCandidate: candidate, order: len(candidates)})
+		}
+	}
+	byInput := make(map[int][]int)
+	for index, candidate := range candidates {
+		byInput[candidate.input] = append(byInput[candidate.input], index)
+	}
+	for inputPosition, indexes := range byInput {
+		sort.Slice(indexes, func(i, j int) bool { return candidates[indexes[i]].row < candidates[indexes[j]].row })
+		positions := make([]int64, len(indexes))
+		byRow := make(map[int64]int, len(indexes))
+		for position, candidateIndex := range indexes {
+			row := candidates[candidateIndex].row
+			positions[position] = row
+			byRow[row] = candidateIndex
+		}
+		input := partition.inputs[inputPosition]
+		if err := shard.ReadRecordsAt(input.Path, positions, func(row int64, view shard.RecordView) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if !inputAllows(input, view) {
+				return nil
+			}
+			candidateIndex, ok := byRow[row]
+			if !ok {
+				return fmt.Errorf("indexed evaluation returned unexpected row %d", row)
+			}
+			candidates[candidateIndex].record = recordFromView(input, row, view)
+			candidates[candidateIndex].textBytes = int64(len(view.Text))
+			return nil
+		}); err != nil {
+			return RecordPartition{}, fmt.Errorf("read indexed evaluation rows from shard %s: %w", input.SHA256, err)
+		}
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].order < candidates[j].order })
+	selected := make([]indexedCandidate, 0, desired)
+	var selectedBytes int64
+	for _, candidate := range candidates {
+		if len(selected) == desired {
+			break
+		}
+		if candidate.record.SelectionID == "" || candidate.textBytes > policy.MaxBytes-selectedBytes {
+			continue
+		}
+		selected = append(selected, candidate)
+		selectedBytes += candidate.textBytes
+	}
+	if len(selected) == 0 {
+		return RecordPartition{}, fmt.Errorf("bounded indexed evaluation probes found no eligible record fitting evaluation_max_bytes=%d; increase the limit, disable evaluation, or audit the stage filters", policy.MaxBytes)
+	}
+	sort.Slice(selected, func(i, j int) bool { return selected[i].key < selected[j].key })
+	hasher := sha256.New()
+	partition.evaluationRecords = make([]Record, 0, len(selected))
+	var tokenTargets int64
+	for _, candidate := range selected {
+		partition.selected[candidate.key] = true
+		partition.evaluationRecords = append(partition.evaluationRecords, candidate.record)
+		_, _ = fmt.Fprintln(hasher, candidate.key)
+		if candidate.record.Conversation == nil && objective == "causal-language-modeling" {
+			tokenTargets += int64(codec.Count(candidate.record.Text))
+			continue
+		}
+		_, mask, err := tokenizeRecord(candidate.record, codec, objective, conversation)
+		if err != nil {
+			return RecordPartition{}, err
+		}
+		for _, supervised := range mask[1:] {
+			if supervised {
+				tokenTargets++
+			}
+		}
+	}
+	partition.eligibleRecords = nil
+	partition.selectionSummary = RecordSelectionSummary{}
+	partition.Evaluation = EvaluationSet{
+		Selection: policy.Selection, Seed: partition.parameters.Seed, Records: int64(len(selected)),
+		TokenTargets: tokenTargets, TextBytes: selectedBytes, SHA256: hex.EncodeToString(hasher.Sum(nil)),
+	}
+	return partition, nil
+}
+
+func desiredEvaluationRecords(total int64, fraction float64, maximum int) int {
+	if total < 2 || maximum < 1 || fraction <= 0 {
+		return 0
+	}
+	if float64(total)*fraction >= float64(maximum) {
+		return min(maximum, int(total-1))
+	}
+	desired := int(math.Ceil(float64(total) * fraction))
+	return min(max(1, desired), maximum, int(total-1))
+}
+
+func indexedEvaluationCandidates(inputs []Input, group indexedInputGroup, seed uint64, limit int) []evaluationCandidate {
+	if limit <= 0 || group.records <= 0 {
+		return nil
+	}
+	digest := evaluationScore(seed, "indexed-sample-v1:"+group.name)
+	start := int64(binary.BigEndian.Uint64(digest[:8]) % uint64(group.records))
+	step := int64(1)
+	if group.records > 1 {
+		step = int64(binary.BigEndian.Uint64(digest[8:16])%uint64(group.records-1)) + 1
+		for greatestCommonDivisor(step, group.records) != 1 {
+			step++
+			if step >= group.records {
+				step = 1
+			}
+		}
+	}
+	result := make([]evaluationCandidate, 0, limit)
+	ordinal := start
+	for range limit {
+		remaining := ordinal
+		for _, inputPosition := range group.inputs {
+			input := inputs[inputPosition]
+			if remaining < input.Records {
+				result = append(result, evaluationCandidate{key: selectionID(input.SHA256, remaining), corpus: input.Corpus, input: inputPosition, row: remaining})
+				break
+			}
+			remaining -= input.Records
+		}
+		ordinal = (ordinal + step) % group.records
+	}
+	return result
+}
+
+func greatestCommonDivisor(left, right int64) int64 {
+	for right != 0 {
+		left, right = right, left%right
+	}
+	return left
 }
 
 func scanEvaluationInput(ctx context.Context, input Input, inputPosition int, seed uint64, policy *EvaluationPolicy, evaluationDisabled bool) evaluationScanResult {
@@ -1035,7 +1249,9 @@ func (partition RecordPartition) trainingSequenceCapacity(ctx context.Context, r
 }
 
 func (partition RecordPartition) trainingSequenceCapacityWithProgress(ctx context.Context, requiredSequences int64, progress func(records, sequences int64)) (int64, bool, error) {
-	source, err := partition.TrainingRecords()
+	bounded := partition
+	bounded.parameters.Data.RepeatUntilSteps = false
+	source, err := bounded.TrainingRecords()
 	if err != nil {
 		return 0, false, err
 	}
@@ -1201,6 +1417,20 @@ func (source partitionedRecordSource) Stream(ctx context.Context, consume func(R
 	})
 }
 
+func (source partitionedRecordSource) streamEpoch(ctx context.Context, epoch int64, consume func(Record) error) error {
+	canonical, ok := source.source.(*canonicalRecordSource)
+	if !ok {
+		return fmt.Errorf("partitioned record source does not expose canonical epochs")
+	}
+	return canonical.streamEpoch(ctx, epoch, func(record Record) error {
+		record, keep, err := source.partition.trainingRecord(record)
+		if err != nil || !keep {
+			return err
+		}
+		return consume(record)
+	})
+}
+
 func (partition RecordPartition) trainingRecord(record Record) (Record, bool, error) {
 	if offset, ok := partition.evaluationSplits[record.SelectionID]; ok {
 		if record.Conversation != nil {
@@ -1308,6 +1538,7 @@ type canonicalRecordSource struct {
 	inputs      []Input
 	seed        uint64
 	epochs      int64
+	repeat      bool
 	buffer      int
 	bufferBytes int64
 	balanced    bool
@@ -1333,7 +1564,7 @@ func NewCanonicalRecordSourceWithTokenizer(inputs []Input, parameters ResolvedPa
 		return nil, fmt.Errorf("unsupported canonical record order %q", parameters.Data.Order)
 	}
 	ordered := orderedInputs(inputs)
-	return &canonicalRecordSource{inputs: ordered, seed: parameters.Seed, epochs: parameters.Epochs, buffer: parameters.Data.ShuffleBufferRecords, bufferBytes: parameters.Data.ShuffleBufferBytes, balanced: parameters.Data.Order == "corpus-balanced-shuffle-v1" || parameters.Data.Order == "corpus-weighted-shuffle-v1", weights: parameters.Data.CorpusWeights, codec: codec}, nil
+	return &canonicalRecordSource{inputs: ordered, seed: parameters.Seed, epochs: parameters.Epochs, repeat: parameters.Data.RepeatUntilSteps, buffer: parameters.Data.ShuffleBufferRecords, bufferBytes: parameters.Data.ShuffleBufferBytes, balanced: parameters.Data.Order == "corpus-balanced-shuffle-v1" || parameters.Data.Order == "corpus-weighted-shuffle-v1", weights: parameters.Data.CorpusWeights, codec: codec}, nil
 }
 
 func orderedInputs(inputs []Input) []Input {
@@ -1351,9 +1582,19 @@ func (source *canonicalRecordSource) Stream(ctx context.Context, consume func(Re
 	if consume == nil {
 		return fmt.Errorf("record consumer is required")
 	}
-	for epoch := int64(0); epoch < source.epochs; epoch++ {
-		if err := source.streamEpoch(ctx, epoch, consume); err != nil {
+	for epoch := int64(0); source.repeat || epoch < source.epochs; epoch++ {
+		emitted := int64(0)
+		if err := source.streamEpoch(ctx, epoch, func(record Record) error {
+			emitted++
+			return consume(record)
+		}); err != nil {
 			return err
+		}
+		if emitted == 0 {
+			return fmt.Errorf("canonical record filters select no training records")
+		}
+		if epoch == math.MaxInt64 {
+			return fmt.Errorf("canonical stream epoch counter overflow")
 		}
 	}
 	return nil
@@ -1483,7 +1724,12 @@ func (source *canonicalRecordSource) streamBalancedEpoch(ctx context.Context, ep
 			groupSource.seed ^= uint64(groupPosition+1) * 0x9e3779b97f4a7c15
 			err := groupSource.streamInputGroup(streamContext, epoch, values, func(record Record) error {
 				if parallelTokenization {
-					record.tokenCount = codecs[groupPosition].Count(record.Text)
+					if record.Conversation == nil {
+						record.preparedTokens = codecs[groupPosition].Encode(record.Text)
+						record.tokenCount = len(record.preparedTokens)
+					} else {
+						record.tokenCount = codecs[groupPosition].Count(record.Text)
+					}
 					record.tokensCounted = true
 				}
 				select {
@@ -1534,10 +1780,10 @@ func (source *canonicalRecordSource) streamBalancedEpoch(ctx context.Context, ep
 		emitted[selected] += int64(record.tokenCount) + 1
 		item, ok := <-streams[selected]
 		if !ok {
-			// A weighted epoch ends when its first corpus is exhausted. Draining
+			// A weighted pass ends when its first corpus is exhausted. Draining
 			// the remaining corpora would silently change the declared token
-			// ratios for the rest of the epoch. The capacity preflight increases
-			// the epoch count when another weighted pass is needed.
+			// ratios for the rest of the pass. Token-budget streams begin another
+			// deterministic pass when more optimizer steps are needed.
 			if len(source.weights) != 0 {
 				return nil
 			}

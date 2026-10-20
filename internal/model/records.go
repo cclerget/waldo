@@ -473,8 +473,9 @@ func validateAttemptCorrections(run RunRecord, runBOM RunBOM) error {
 			}
 			continue
 		}
-		if attempt.Correction != "fixed-token-capacity-v1" || attempt.ResumeStep <= 0 || !equivalentResumeParameters(runBOM.Parameters, *attempt.EffectiveParameters) {
-			return fmt.Errorf("run %s attempt %d has an invalid fixed-token capacity correction", run.ID, attempt.Ordinal)
+		validKind := attempt.Correction == "fixed-token-capacity-v1" || attempt.Correction == "streaming-token-source-v1"
+		if !validKind || attempt.Correction != resumeCorrection(runBOM.Parameters, *attempt.EffectiveParameters) || attempt.ResumeStep <= 0 || !equivalentResumeParameters(runBOM.Parameters, *attempt.EffectiveParameters) {
+			return fmt.Errorf("run %s attempt %d has an invalid token-source correction", run.ID, attempt.Ordinal)
 		}
 	}
 	return nil

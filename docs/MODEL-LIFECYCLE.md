@@ -197,11 +197,11 @@ when the WALDO architecture enables parameter-free QK normalization. Those
 runtimes cannot currently preserve its attention math. Native WALDO artifacts
 remain usable; portable export requires an exact runtime implementation first.
 
-One compatibility exception repairs a WALDO-derived value rather than a user
-change. If an older fixed-token run exhausted its input because WALDO pinned too
-few deterministic source passes, a verified checkpoint may resume with only
-that pass limit increased. The immutable run BOM remains unchanged, while the
-new `RUN.json` attempt records `fixed-token-capacity-v1` and the complete
+Compatibility repairs change WALDO-derived token-source mechanics rather than
+user intent. An older fixed-token run with a verified checkpoint may increase
+an insufficient deterministic pass limit (`fixed-token-capacity-v1`) or upgrade
+to the on-demand repeating stream (`streaming-token-source-v1`). The immutable
+run BOM remains unchanged and the new `RUN.json` attempt records the complete
 effective parameters. Corpus identity, held-out split, target steps, optimizer,
 schedule, backend, topology, and every other parameter must still match.
 
@@ -394,12 +394,13 @@ disable it during evaluation and inference.
 Scalar corpus paths and the older `parameters.corpus_weights` map remain
 accepted. A configured corpus entry can also carry license, language, source,
 and date filters; stage-wide and corpus-local filters are combined and pinned
-in the corpus BOM before held-out selection and training. Stage preflight
-records training-eligible row counts by corpus and warns when filtering and
-held-out selection leave a selected corpus with no training rows. Such a corpus
-remains selected in the BOM but is omitted from the positive
-observed-consumption list; WALDO still requires that the listed per-corpus
-token targets sum exactly to total consumption.
+in the corpus BOM before held-out selection and training. Exact scanning
+policies record training-eligible row counts by corpus and can warn before
+training when a selected corpus has no rows. Indexed policies avoid that scan;
+actual positive per-corpus token consumption provides the final evidence.
+Corpora with zero consumption remain selected in the BOM but are omitted from
+the positive observed-consumption list; WALDO still requires that the listed
+per-corpus token targets sum exactly to total consumption.
 
 Run it with:
 
@@ -446,9 +447,11 @@ side effects.
 Passing `--audit` audits every materialized stage before the transaction starts.
 Interactive terminals receive byte-level materialization progress; redirected
 logs receive one completion line for every shard. The optional audit is shown
-as a separate phase. Deterministic held-out selection enumerates the row counts
-pinned by the corpus BOM, reports shard and record progress, and reads only the
-bounded candidate rows before backend selection. The optional
+as a separate phase. Default deterministic held-out selection computes bounded
+candidate positions from row counts pinned by the corpus BOM and directly reads
+only those rows before backend selection; it does not enumerate the corpus.
+Legacy exact lowest-hash policies enumerate eligible rows and report shard and
+record progress. The optional
 `contiguous-tail-v1` policy instead requires exactly one eligible text row and
 pins a UTF-8 byte offset that keeps its prefix in training and its suffix in
 evaluation. While a compose is running,
@@ -495,9 +498,10 @@ attempt without one remains terminal and is restarted as a new run.
 - `RUN-BOM.json` embeds the hash-pinned corpus OpenWALDO BOM and pins
   architecture, backend, objective, parameters, and execution environment
   before launch. It also pins `PREFLIGHT.json`, which records the exact
-  held-out row selection, any partial-record byte split, and any epoch-derived
-  optimizer-step count. An exact
-  retry reuses that verified result instead of rescanning every record; a
+  held-out row selection, any partial-record byte split, any available exact
+  row-selection accounting, and any epoch-derived optimizer-step count. An exact
+  retry reuses that verified result instead of repeating its indexed reads (or
+  a legacy exact scan); a
   changed corpus, filter, tokenizer, architecture, or stage rebuilds it.
   Runs created before this artifact existed remain valid and perform the scan.
   With `--audit`, the run BOM additionally carries each embedded shard

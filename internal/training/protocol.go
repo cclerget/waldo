@@ -45,11 +45,20 @@ type tokenizedRecordSource struct {
 
 func (source tokenizedRecordSource) Stream(ctx context.Context, consume func(Record) error) error {
 	return source.source.Stream(ctx, func(record Record) error {
-		var err error
-		record.Tokens, record.LossMask, err = tokenizeRecord(record, source.codec, source.objective, source.conversation)
-		if err != nil {
-			return fmt.Errorf("tokenize record %s: %w", record.ID, err)
+		if record.preparedTokens != nil && record.Conversation == nil && source.objective == "causal-language-modeling" {
+			record.Tokens = record.preparedTokens
+			record.LossMask = make([]bool, len(record.Tokens)+1)
+			for index := range record.LossMask {
+				record.LossMask[index] = true
+			}
+		} else {
+			var err error
+			record.Tokens, record.LossMask, err = tokenizeRecord(record, source.codec, source.objective, source.conversation)
+			if err != nil {
+				return fmt.Errorf("tokenize record %s: %w", record.ID, err)
+			}
 		}
+		record.preparedTokens = nil
 		record.Text = ""
 		record.Conversation = nil
 		return consume(record)

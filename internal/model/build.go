@@ -45,16 +45,6 @@ type ProgressBar struct {
 	Complete bool   `json:"complete,omitempty"`
 }
 
-func capacityProgressBar(event training.CapacityProgress, complete bool) *ProgressBar {
-	return &ProgressBar{
-		Label:    "pack",
-		Current:  event.Sequences,
-		Total:    event.RequiredSequences,
-		Detail:   fmt.Sprintf("%d cumulative record visits; corpus pass %d (%d completed)", event.Records, event.CurrentPass, event.CompletedPasses),
-		Complete: complete,
-	}
-}
-
 type Builder struct {
 	Root                   string
 	Now                    func() time.Time
@@ -280,7 +270,9 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 		}
 		if !selectionCached {
 			selectionMessage := fmt.Sprintf("selecting deterministic held-out records across %d shards", len(prepared.Inputs))
-			if stage.Parameters.Tokens > 0 {
+			if resolvedParameters.Evaluation != nil && training.IsIndexedEvaluationSelection(resolvedParameters.Evaluation.Selection) {
+				selectionMessage = fmt.Sprintf("selecting deterministic held-out sample with bounded indexed reads from %d shards; no corpus scan required", len(prepared.Inputs))
+			} else if stage.Parameters.Tokens > 0 {
 				selectionMessage = fmt.Sprintf("1/3 applying corpus filters and excluding held-out records across %d shards", len(prepared.Inputs))
 			}
 			builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: selectionMessage})
@@ -331,45 +323,8 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 		}
 		preflight = partition.Preflight(preflightIdentity, resolvedParameters, capacityVerified)
 	}
-	if stage.Parameters.Tokens > 0 && !capacityVerified {
-		builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("2/3 tokenizing and packing records into fixed-length sequences of %d tokens", resolvedParameters.SequenceLength)})
-		builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("3/3 calculating the minimum corpus passes needed to satisfy the requested token budget (%d steps × global batch %d)", resolvedParameters.Steps, resolvedParameters.BatchSize)})
-		var epochs int64
-		clock := builder.clock()
-		var lastReport time.Time
-		partition, epochs, err = partition.WithMinimumEpochsForStepsProgress(ctx, resolvedParameters.Steps, func(event training.CapacityProgress) {
-			if event.Records == 0 && event.CurrentPass == 1 && !event.Complete {
-				lastReport = clock()
-				builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("packing 0/%d required sequences; scanning corpus pass 1", event.RequiredSequences), Bar: capacityProgressBar(event, false)})
-				return
-			}
-			if event.Complete {
-				builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("packed all %d required sequences in %d corpus passes after %d cumulative record visits", event.RequiredSequences, event.CurrentPass, event.Records), Bar: capacityProgressBar(event, true)})
-				return
-			}
-			if event.PassComplete {
-				builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("completed corpus pass %d with %d/%d required sequences after %d cumulative record visits; continuing with pass %d", event.CompletedPasses, event.Sequences, event.RequiredSequences, event.Records, event.CurrentPass+1), Bar: capacityProgressBar(event, false)})
-				return
-			}
-			now := clock()
-			if lastReport.IsZero() || now.Sub(lastReport) >= 5*time.Second {
-				lastReport = now
-				builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("packing %d/%d required sequences after %d cumulative record visits; scanning corpus pass %d (%d completed)", event.Sequences, event.RequiredSequences, event.Records, event.CurrentPass, event.CompletedPasses), Bar: capacityProgressBar(event, false)})
-			}
-		})
-		if err != nil {
-			return Inspection{}, fmt.Errorf("stage %s training capacity: %w", stage.Name, err)
-		}
-		resolvedParameters.Epochs = epochs
-		capacityVerified = true
-		preflight = partition.Preflight(preflightIdentity, resolvedParameters, true)
-		passes := "passes"
-		supply := "supply"
-		if epochs == 1 {
-			passes = "pass"
-			supply = "supplies"
-		}
-		builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("minimum corpus passes determined: %d %s %s %d optimizer steps", epochs, passes, supply, resolvedParameters.Steps)})
+	if stage.Parameters.Tokens > 0 {
+		builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("training-ready Parquet will be filtered, tokenized, and packed while training runs; the canonical stream repeats until %d optimizer steps are supplied", resolvedParameters.Steps)})
 	}
 	for _, corpus := range partition.ZeroEligibleCorpora() {
 		builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("warning: %s has no records after stage filters and will contribute zero training tokens", corpus)})
@@ -717,11 +672,30 @@ func equivalentResumeParameters(persisted, effective training.ResolvedParameters
 	if equivalentTrainingParameters(persisted, effective) {
 		return true
 	}
-	if persisted.RequestedTokens <= 0 || persisted.RequestedTokens != effective.RequestedTokens || effective.Epochs <= persisted.Epochs {
+	if persisted.RequestedTokens <= 0 || persisted.RequestedTokens != effective.RequestedTokens {
+		return false
+	}
+	if persisted.Data.RepeatUntilSteps && effective.Data.RepeatUntilSteps {
+		persisted.Epochs = effective.Epochs
+		return equivalentTrainingParameters(persisted, effective)
+	}
+	if !persisted.Data.RepeatUntilSteps && effective.Data.RepeatUntilSteps {
+		persisted.Data.RepeatUntilSteps = true
+		persisted.Epochs = effective.Epochs
+		return equivalentTrainingParameters(persisted, effective)
+	}
+	if effective.Epochs <= persisted.Epochs {
 		return false
 	}
 	persisted.Epochs = effective.Epochs
 	return equivalentTrainingParameters(persisted, effective)
+}
+
+func resumeCorrection(persisted, effective training.ResolvedParameters) string {
+	if !persisted.Data.RepeatUntilSteps && effective.Data.RepeatUntilSteps {
+		return "streaming-token-source-v1"
+	}
+	return "fixed-token-capacity-v1"
 }
 
 // HasRecoverableCheckpointFailure reports whether WALDO has a durable
@@ -781,13 +755,19 @@ func (builder Builder) resumeTraining(ctx context.Context, name string, inspecti
 		}
 		corrected := effectiveParameters
 		correction = &corrected
-		builder.report(Progress{Phase: "run", Stage: pin.Stage, RunID: pin.ID, State: RunInterrupted, Message: fmt.Sprintf("correcting fixed-token source passes from %d to %d while resuming checkpoint step %d", runBOM.Parameters.Epochs, effectiveParameters.Epochs, resumeStep(resume))})
+		if resumeCorrection(runBOM.Parameters, effectiveParameters) == "streaming-token-source-v1" {
+			builder.report(Progress{Phase: "run", Stage: pin.Stage, RunID: pin.ID, State: RunInterrupted, Message: fmt.Sprintf("upgrading the token-budget input to stream and repeat on demand while resuming checkpoint step %d", resumeStep(resume))})
+		} else {
+			builder.report(Progress{Phase: "run", Stage: pin.Stage, RunID: pin.ID, State: RunInterrupted, Message: fmt.Sprintf("correcting fixed-token source passes from %d to %d while resuming checkpoint step %d", runBOM.Parameters.Epochs, effectiveParameters.Epochs, resumeStep(resume))})
+		}
 	}
 	return builder.executeTrainingAttempt(ctx, name, inspection.Path, &record, pin, run, runBOM, stage, prepared, records, evaluationRecords, eligibleRecords, architectureJSON, selection, resume, correction)
 }
 
 func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPath string, record *ModelRecord, pin RunPin, run RunRecord, runBOM RunBOM, stage Stage, prepared PreparedStage, records, evaluationRecords training.RecordSource, eligibleRecords map[string]int64, architectureJSON json.RawMessage, selection training.Selection, resume *training.ResumePoint, effectiveParameters *training.ResolvedParameters) (Inspection, error) {
+	correction := ""
 	if effectiveParameters != nil {
+		correction = resumeCorrection(runBOM.Parameters, *effectiveParameters)
 		runBOM.Parameters = *effectiveParameters
 	}
 	tokenizerSpec := training.TokenizerSpec{Name: record.Architecture.Tokenizer.Name, Revision: record.Architecture.Tokenizer.Revision, VocabularySize: int(record.Architecture.VocabularySize), PadID: 0, BOSID: 1, EOSID: 2}
@@ -822,7 +802,7 @@ func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPa
 	runAttempt := RunAttempt{Ordinal: len(run.Attempts) + 1, Started: formatTime(attemptStarted), State: RunRunning, ResumeStep: resumeStep(resume)}
 	if effectiveParameters != nil {
 		parameters := *effectiveParameters
-		runAttempt.Correction = "fixed-token-capacity-v1"
+		runAttempt.Correction = correction
 		runAttempt.EffectiveParameters = &parameters
 	}
 	run.Attempts = append(run.Attempts, runAttempt)
@@ -1989,19 +1969,15 @@ func validateStagedComposeRun(inspection Inspection, index int, prepared Prepare
 			return err
 		}
 	}
-	// A token-budget preflight derives the minimum corpus pass count after the
-	// initial planning parameters are resolved. The persisted preflight remains
-	// authoritative on resume, so compare that derived field against itself;
-	// Train will reload the same verified preflight before opening the stream.
-	if prepared.Stage.Parameters.Tokens > 0 && prepared.Stage.Parameters.Epochs == 0 {
-		parameters.Epochs = bom.Parameters.Epochs
-	}
 	conversation := training.ConversationTransform{}
 	if prepared.Stage.Conversation != nil {
 		conversation = *prepared.Stage.Conversation
 	}
 	corpusMatches := bom.CorpusBOMSHA256 == corpusHash || equivalentPlannedCorpusBOM(bom.CorpusBOM, prepared.BOM)
 	parametersMatch := equivalentTrainingParameters(bom.Parameters, parameters)
+	if prepared.Stage.Parameters.Tokens > 0 {
+		parametersMatch = equivalentResumeParameters(bom.Parameters, parameters)
+	}
 	if bom.Stage != prepared.Stage.Name || bom.StageType != prepared.Stage.Type || bom.Objective != prepared.Stage.Objective || !reflect.DeepEqual(bom.Conversation, conversation) || !corpusMatches || !parametersMatch {
 		return fmt.Errorf("run %d immutable facts do not match stage %s (name=%t type=%t objective=%t conversation=%t corpus=%t parameters=%t; saved parameters=%+v; requested parameters=%+v)", index+1, prepared.Stage.Name,
 			bom.Stage == prepared.Stage.Name, bom.StageType == prepared.Stage.Type, bom.Objective == prepared.Stage.Objective,

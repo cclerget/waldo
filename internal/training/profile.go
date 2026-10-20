@@ -244,17 +244,17 @@ func resolveParameters(parameters Parameters, steps, requestedTokens int64) (Res
 		evaluationFraction, evaluationMaxRecords, evaluationMaxBytes = 0, 0, 0
 	}
 	order := "bounded-shuffle-v1"
-	selection := "lowest-sha256-v1"
+	selection := "indexed-sample-v1"
 	profileSchema := ProfileSchema
 	if profile == BalancedProfile {
 		order = "corpus-balanced-shuffle-v1"
-		selection = "stratified-lowest-sha256-v1"
+		selection = "stratified-indexed-sample-v1"
 	}
 	if parameters.EvaluationSelection != "" {
 		selection = parameters.EvaluationSelection
 	}
-	if selection != "lowest-sha256-v1" && selection != "stratified-lowest-sha256-v1" && selection != "contiguous-tail-v1" {
-		return ResolvedParameters{}, fmt.Errorf("evaluation_selection must be lowest-sha256-v1, stratified-lowest-sha256-v1, or contiguous-tail-v1")
+	if selection != "indexed-sample-v1" && selection != "stratified-indexed-sample-v1" && selection != "lowest-sha256-v1" && selection != "stratified-lowest-sha256-v1" && selection != "contiguous-tail-v1" {
+		return ResolvedParameters{}, fmt.Errorf("evaluation_selection must be indexed-sample-v1, stratified-indexed-sample-v1, lowest-sha256-v1, stratified-lowest-sha256-v1, or contiguous-tail-v1")
 	}
 	if selection == "contiguous-tail-v1" && profile != ShuffledProfile {
 		return ResolvedParameters{}, fmt.Errorf("evaluation_selection contiguous-tail-v1 requires training profile %q", ShuffledProfile)
@@ -274,7 +274,9 @@ func resolveParameters(parameters Parameters, steps, requestedTokens int64) (Res
 			return ResolvedParameters{}, fmt.Errorf("training profile %q requires corpus_weights", WeightedProfile)
 		}
 		order = "corpus-weighted-shuffle-v1"
-		selection = "stratified-lowest-sha256-v1"
+		if parameters.EvaluationSelection == "" {
+			selection = "stratified-indexed-sample-v1"
+		}
 	} else if len(weights) != 0 {
 		return ResolvedParameters{}, fmt.Errorf("corpus_weights require training profile %q", WeightedProfile)
 	}
@@ -287,7 +289,7 @@ func resolveParameters(parameters Parameters, steps, requestedTokens int64) (Res
 		Seed: parameters.Seed, PlannedTokenCapacity: capacity,
 		Optimizer:       Optimizer{Name: optimizerName, WeightDecay: weightDecay, Beta1: 0.9, Beta2: 0.95, Epsilon: 1e-8},
 		Schedule:        Schedule{Name: scheduleName, WarmupSteps: warmup, WarmdownSteps: warmdown, MinimumRateRatio: minimumRateRatio},
-		Data:            DataPlan{Order: order, ShuffleBufferRecords: shuffleBuffer, ShuffleBufferBytes: shuffleBufferBytes, Packing: "continuous-eos-v1", CorpusWeights: weights},
+		Data:            DataPlan{Order: order, ShuffleBufferRecords: shuffleBuffer, ShuffleBufferBytes: shuffleBufferBytes, Packing: "continuous-eos-v1", CorpusWeights: weights, RepeatUntilSteps: requestedTokens > 0},
 		Evaluation:      &EvaluationPolicy{Selection: selection, Fraction: evaluationFraction, MaxRecords: evaluationMaxRecords, MaxBytes: evaluationMaxBytes},
 		CheckpointEvery: checkpointEvery, EvaluateEvery: evaluateEvery,
 	}, nil

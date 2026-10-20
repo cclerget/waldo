@@ -831,6 +831,7 @@ func TestFixedTokenResumeMayCorrectOnlyDerivedEpochLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	persisted.Data.RepeatUntilSteps = false
 	effective := persisted
 	effective.Epochs = 2
 	if !equivalentResumeParameters(persisted, effective) {
@@ -848,6 +849,29 @@ func TestFixedTokenResumeMayCorrectOnlyDerivedEpochLimit(t *testing.T) {
 	run.Attempts[0].EffectiveParameters = &changed
 	if err := validateAttemptCorrections(run, RunBOM{Parameters: persisted}); err == nil {
 		t.Fatal("invalid attempt correction was accepted")
+	}
+}
+
+func TestFixedTokenResumeMayUpgradeToStreamingSource(t *testing.T) {
+	persisted, err := training.ResolveParameters(training.Parameters{Tokens: 100, BatchSize: 1, SequenceLength: 10, LearningRate: 0.001, Seed: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	persisted.Data.RepeatUntilSteps = false
+	persisted.Epochs = 4
+	effective := persisted
+	effective.Data.RepeatUntilSteps = true
+	effective.Epochs = 1
+	if !equivalentResumeParameters(persisted, effective) {
+		t.Fatal("streaming token-source upgrade is not resume-compatible")
+	}
+	run := RunRecord{ID: "run", Attempts: []RunAttempt{{Ordinal: 1, ResumeStep: 5, Correction: "streaming-token-source-v1", EffectiveParameters: &effective}}}
+	if err := validateAttemptCorrections(run, RunBOM{Parameters: persisted}); err != nil {
+		t.Fatalf("valid streaming correction: %v", err)
+	}
+	run.Attempts[0].Correction = "fixed-token-capacity-v1"
+	if err := validateAttemptCorrections(run, RunBOM{Parameters: persisted}); err == nil {
+		t.Fatal("incorrect correction kind was accepted")
 	}
 }
 
@@ -1154,7 +1178,7 @@ func TestTrainResumesInterruptedRunFromVerifiedCheckpoint(t *testing.T) {
 	}
 }
 
-func TestTrainRepairsFixedTokenCapacityAndResumesFailedCheckpoint(t *testing.T) {
+func TestTrainResumesFixedTokenCheckpointWithStreamingSource(t *testing.T) {
 	root := t.TempDir()
 	attempts := 0
 	backend := backendFunc(func(_ context.Context, request training.Request) (training.Observation, error) {
@@ -1173,8 +1197,8 @@ func TestTrainRepairsFixedTokenCapacityAndResumesFailedCheckpoint(t *testing.T) 
 			request.Report(training.Event{Kind: "checkpoint", Message: "test checkpoint", Step: 1, Tokens: 64, Checkpoint: &checkpoint})
 			return training.Observation{}, errors.New("TorchTitan worker: worker input ended without begin/end framing")
 		}
-		if request.Resume == nil || request.Resume.Step != 1 || request.Parameters.Epochs <= 1 {
-			return training.Observation{}, fmt.Errorf("capacity-corrected resume = %+v, epochs %d", request.Resume, request.Parameters.Epochs)
+		if request.Resume == nil || request.Resume.Step != 1 || !request.Parameters.Data.RepeatUntilSteps {
+			return training.Observation{}, fmt.Errorf("streaming resume = %+v, data plan %+v", request.Resume, request.Parameters.Data)
 		}
 		data := []byte("capacity-corrected resumed weights")
 		path := filepath.Join(request.ArtifactDirectory, "model.safetensors")
@@ -1213,42 +1237,8 @@ func TestTrainRepairsFixedTokenCapacityAndResumesFailedCheckpoint(t *testing.T) 
 	if err := validateComposeTarget(failed, resumeCompose); err != nil {
 		t.Fatalf("checkpoint-backed interrupted run was rejected before compose recovery: %v", err)
 	}
-	if failed.RunBOMs[0].Parameters.Epochs <= 1 {
-		t.Fatalf("test fixture did not require multiple epochs: %+v", failed.RunBOMs[0].Parameters)
-	}
-	runDirectory := filepath.Join(failed.Path, "runs", runDirectoryName(failed.Model.Runs[0]))
-	var snapshot training.StagePreflight
-	if err := readStrictJSON(filepath.Join(runDirectory, "PREFLIGHT.json"), &snapshot); err != nil {
-		t.Fatal(err)
-	}
-	snapshot.Parameters.Epochs = 1
-	snapshot.CapacityVerified = false
-	if err := writeJSONAtomic(filepath.Join(runDirectory, "PREFLIGHT.json"), snapshot); err != nil {
-		t.Fatal(err)
-	}
-	preflightHash, preflightBytes, err := hashFile(filepath.Join(runDirectory, "PREFLIGHT.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	runBOM := failed.RunBOMs[0]
-	runBOM.Parameters.Epochs = 1
-	runBOM.Preflight = &training.Artifact{Path: "PREFLIGHT.json", SHA256: preflightHash, Bytes: preflightBytes}
-	runBOMHash, err := hashJSON(runBOM)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := writeJSONAtomic(filepath.Join(runDirectory, "RUN-BOM.json"), runBOM); err != nil {
-		t.Fatal(err)
-	}
-	run := failed.Runs[0]
-	run.BOMSHA256 = runBOMHash
-	if err := writeJSONAtomic(filepath.Join(runDirectory, "RUN.json"), run); err != nil {
-		t.Fatal(err)
-	}
-	record := failed.Model
-	record.Runs[0].BOMSHA256 = runBOMHash
-	if err := persistModel(failed.Path, &record, time.Now()); err != nil {
-		t.Fatal(err)
+	if !failed.RunBOMs[0].Parameters.Data.RepeatUntilSteps || failed.RunBOMs[0].Parameters.Epochs != 1 {
+		t.Fatalf("fixed-token run did not pin streaming repetition: %+v", failed.RunBOMs[0].Parameters)
 	}
 
 	completed, err := builder.Train(context.Background(), "capacity", prepared)
@@ -1258,12 +1248,9 @@ func TestTrainRepairsFixedTokenCapacityAndResumesFailedCheckpoint(t *testing.T) 
 	if attempts != 2 || len(completed.Runs) != 1 || completed.Runs[0].State != RunComplete || len(completed.Runs[0].Attempts) != 2 {
 		t.Fatalf("capacity recovery = attempts %d, runs %+v", attempts, completed.Runs)
 	}
-	correction := completed.Runs[0].Attempts[1]
-	if correction.ResumeStep != 1 || correction.Correction != "fixed-token-capacity-v1" || correction.EffectiveParameters == nil || correction.EffectiveParameters.Epochs <= 1 {
-		t.Fatalf("capacity correction = %+v", correction)
-	}
-	if completed.RunBOMs[0].Parameters.Epochs != 1 {
-		t.Fatalf("immutable legacy run BOM was changed: %+v", completed.RunBOMs[0].Parameters)
+	resumeAttempt := completed.Runs[0].Attempts[1]
+	if resumeAttempt.ResumeStep != 1 || resumeAttempt.Correction != "" || resumeAttempt.EffectiveParameters != nil {
+		t.Fatalf("streaming resume attempt = %+v", resumeAttempt)
 	}
 }
 
@@ -1285,7 +1272,7 @@ func TestTrainDerivesAndPersistsEpochSteps(t *testing.T) {
 	}
 }
 
-func TestTrainReportsTokenBudgetCapacityProgress(t *testing.T) {
+func TestTrainReportsStreamingTokenBudget(t *testing.T) {
 	root := t.TempDir()
 	var events []Progress
 	builder := Builder{Root: root, Resolver: training.FakeResolver(), Progress: func(event Progress) { events = append(events, event) }}
@@ -1298,16 +1285,14 @@ func TestTrainReportsTokenBudgetCapacityProgress(t *testing.T) {
 	if _, err := builder.Train(context.Background(), "token-model", preparedFixture(t, stage)); err != nil {
 		t.Fatal(err)
 	}
-	var filtering, packing, calculating, started, completed bool
+	var indexed, streaming, capacityScan bool
 	for _, event := range events {
-		filtering = filtering || strings.Contains(event.Message, "1/3 applying corpus filters and excluding held-out records")
-		packing = packing || strings.Contains(event.Message, "2/3 tokenizing and packing records into fixed-length sequences")
-		calculating = calculating || strings.Contains(event.Message, "3/3 calculating the minimum corpus passes")
-		started = started || event.Bar != nil && event.Bar.Current == 0 && event.Bar.Total > 0
-		completed = completed || event.Bar != nil && event.Bar.Complete && event.Bar.Current == event.Bar.Total
+		indexed = indexed || strings.Contains(event.Message, "bounded indexed reads")
+		streaming = streaming || strings.Contains(event.Message, "filtered, tokenized, and packed while training runs")
+		capacityScan = capacityScan || strings.Contains(event.Message, "calculating the minimum corpus passes") || event.Bar != nil
 	}
-	if !filtering || !packing || !calculating || !started || !completed {
-		t.Fatalf("capacity progress events = %+v", events)
+	if !indexed || !streaming || capacityScan {
+		t.Fatalf("streaming token-budget progress events = %+v", events)
 	}
 }
 
@@ -1427,11 +1412,12 @@ func TestChangedStageIdentityDoesNotReusePreflight(t *testing.T) {
 	if _, err := builder.Train(context.Background(), "preflight-model", prepared); err != nil {
 		t.Fatal(err)
 	}
-	var rescanned bool
+	var reselected, reused bool
 	for _, event := range progress {
-		rescanned = rescanned || strings.Contains(event.Message, "evaluation selection")
+		reselected = reselected || strings.Contains(event.Message, "selecting deterministic held-out sample")
+		reused = reused || strings.Contains(event.Message, "reused cached evaluation selection")
 	}
-	if !rescanned {
+	if !reselected || reused {
 		t.Fatalf("changed stage reused stale preflight: %+v", progress)
 	}
 }

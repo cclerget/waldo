@@ -52,7 +52,7 @@ func TestPromotedReference(t *testing.T) {
 		t.Fatalf("Cosmopedia filter changed: %+v", filter)
 	}
 	parameters := stage.Parameters
-	if parameters.Profile != "causal-pretrain-weighted" || parameters.Tokens != 1189798400 || parameters.BatchSize != 16 || parameters.GradientAccumulation != 4 || parameters.SequenceLength != 1024 || parameters.LearningRate != 0.0004 || parameters.Optimizer != "adamw" || parameters.Schedule != "cosine" || parameters.Seed != 42 || parameters.EvaluationSelection != "lowest-sha256-v1" {
+	if parameters.Profile != "causal-pretrain-weighted" || parameters.Tokens != 1189798400 || parameters.BatchSize != 16 || parameters.GradientAccumulation != 4 || parameters.SequenceLength != 1024 || parameters.LearningRate != 0.0004 || parameters.Optimizer != "adamw" || parameters.Schedule != "cosine" || parameters.Seed != 42 || parameters.EvaluationSelection != "indexed-sample-v1" {
 		t.Fatalf("training controls changed: %+v", parameters)
 	}
 }

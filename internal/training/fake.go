@@ -45,7 +45,17 @@ func (Fake) Run(ctx context.Context, request Request) (Observation, error) {
 		return Observation{}, fmt.Errorf("fake backend received no canonical record stream")
 	}
 	var records int64
-	if err := request.Records.Stream(ctx, func(Record) error {
+	stream := request.Records.Stream
+	if request.Parameters.Data.RepeatUntilSteps {
+		epochs, ok := request.Records.(epochRecordSource)
+		if !ok {
+			return Observation{}, fmt.Errorf("repeat-until-steps record stream does not expose a canonical epoch")
+		}
+		stream = func(ctx context.Context, consume func(Record) error) error {
+			return epochs.streamEpoch(ctx, 0, consume)
+		}
+	}
+	if err := stream(ctx, func(Record) error {
 		records++
 		return nil
 	}); err != nil {
@@ -56,7 +66,11 @@ func (Fake) Run(ctx context.Context, request Request) (Observation, error) {
 		if request.EvaluationSet.Selection == "contiguous-tail-v1" {
 			fullyHeldOut = 0
 		}
-		expectedTrainingRecords := (request.BOM.Totals.Docs - fullyHeldOut) * request.Parameters.Epochs
+		epochs := request.Parameters.Epochs
+		if request.Parameters.Data.RepeatUntilSteps {
+			epochs = 1
+		}
+		expectedTrainingRecords := (request.BOM.Totals.Docs - fullyHeldOut) * epochs
 		if records != expectedTrainingRecords {
 			return Observation{}, fmt.Errorf("canonical training stream contains %d records, expected %d after held-out selection", records, expectedTrainingRecords)
 		}

@@ -78,3 +78,4 @@ Superseded and historical ADRs are removed. Missing numbers are intentional.
 - [0079: Publish the best held-out checkpoint](0079-publish-best-heldout-checkpoint.md)
 - [0080: Support a pinned contiguous-tail evaluation view](0080-contiguous-tail-evaluation.md)
 - [0081: Version exact intrinsic-loss telemetry](0081-version-intrinsic-loss-telemetry.md)
+- [0082: Stream training-ready Parquet into token-budget runs](0082-stream-training-ready-parquet.md)
