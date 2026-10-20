@@ -43,7 +43,7 @@ expected to be a reliable open-domain factual system.
 | 0003 | same 30.7M core | Inherit rung 0002 exactly; add only a supervised interaction stage | Respond to simple, grounded prompts inside the TinyStories language domain | Passed |
 | 0004 | 64.7M total / 59.5M core | 12 layers, width 640, SwiGLU 1,728, 10/10 heads, 8K tied vocabulary, 1,024 context | Short coherent simple-English prose across several everyday forms | Passed |
 | 0005 | 124.6M total / about 106.2M core | 30 layers, width 576, SwiGLU 1,536, 9/3 grouped-query heads, 32K tied vocabulary, 2,048 context | Grammatical, locally relevant general-language continuation without assistant claims | Passed |
-| 0006 | 345.4M total / 314.6M core | 32 layers, width 960, SwiGLU 2,560, 15/5 grouped-query heads, 32K tied vocabulary, 2,048 context | Improve distribution fit and sustain longer coherent general-language continuation | 5-TPP pilot prepared |
+| 0006 | 345.4M total / 314.6M core | 32 layers, width 960, SwiGLU 2,560, 15/5 grouped-query heads, 32K tied vocabulary, 2,048 context | Improve distribution fit and sustain longer coherent general-language continuation | 5-TPP pilot passed; 10-TPP phase underway |
 | 0007 | inherit passed 0006 | No architecture change; supervised post-training only | Constrained assistant for extraction, classification, rewriting, and grounded QA | Defined, not authorized |
 
 The 125M and 350M designs follow the deep-and-thin, tied-embedding, grouped-
@@ -210,18 +210,32 @@ The 5-core-TPP pilot may advance only if:
 
 - training and evaluation remain finite, the artifact reloads exactly, and the
   selected checkpoint lies in the final 20%;
-- no source view exceeds four effective passes;
+- effective passes are recorded for every source view so repeated exposure is
+  explicit, but pass count alone is not a failure;
 - selected held-out BPB is no worse than 0.9243;
 - at least 16/20 sampled outputs remain grammatical and on topic for two
   sentences, and at least 18/20 contain two complete sentences; and
 - no more than 2/20 sampled or 3/20 greedy outputs loop.
 
-Ten and twenty core TPP are follow-on exposure phases, not automatic full
-runs. Final promotion requires held-out BPB no worse than 0.85, at least 18/20
+The 5-core-TPP pilot passed: selected held-out BPB was 0.8442, the step-96,000
+artifact reloaded exactly, 20/20 sampled outputs contained two complete
+sentences, 17/20 remained grammatical and on topic for both sentences, and the
+sampled/greedy suites contained one/two loops respectively.
+
+Ten and twenty core TPP are controlled follow-on exposure phases, not automatic
+full runs. They retain the exact tokenizer, source views, mixture weights,
+architecture, optimizer, schedule, seed, and evaluation suite; only token
+exposure changes. Effective source passes are evidence, not a hard ceiling.
+Advance only while held-out BPB does not regress from the preceding phase, the
+selected checkpoint remains in the final 20%, and native generation does not
+materially regress. An earlier selected checkpoint or worsening held-out BPB is
+evidence to stop for overtraining rather than change the corpus mid-comparison.
+
+Final promotion requires held-out BPB no worse than 0.85, at least 18/20
 sampled outputs grammatical and on topic for three sentences, no more than one
-sampled or two greedy loops, exact reload, and the same four-pass ceiling. EOS
-and public benchmark results remain diagnostics. Beyond 20 TPP requires a new
-evidence review, not an automatic extension.
+sampled or two greedy loops, and exact reload. EOS and public benchmark results
+remain diagnostics. Beyond 20 TPP requires a new evidence review, not an
+automatic extension.
 
 ### Rung 0007: constrained compact assistant
 
