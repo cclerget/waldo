@@ -139,6 +139,24 @@ func TestModelMaterializeProgressReportsEveryCompletedShardToLogs(t *testing.T) 
 	}
 }
 
+func TestEpochStageExplainsMaterializationBeforeResolvingShards(t *testing.T) {
+	var progress bytes.Buffer
+	stage := model.Stage{Name: "pretrain", Parameters: training.Parameters{Epochs: 3}}
+	_, err := materializeModelStage(Context{Execution: context.Background()}, stage, corpus.BOM{}, nil, &progress, false)
+	if err == nil {
+		t.Fatal("empty BOM unexpectedly materialized")
+	}
+	got := progress.String()
+	note := "epoch-based training requires every selected shard to be materialized (or reused from cache) and hash-verified"
+	resolved := "preflight/pretrain          resolving"
+	if !strings.Contains(got, note) {
+		t.Fatalf("progress = %q, missing epoch materialization explanation", got)
+	}
+	if strings.Index(got, note) > strings.Index(got, resolved) {
+		t.Fatalf("epoch explanation follows shard resolution: %q", got)
+	}
+}
+
 func TestParseModelTrainDiagnosesOmittedModelName(t *testing.T) {
 	for _, path := range []string{"core/common-pile/python-enhancement-proposals/peps", "."} {
 		var stdout, stderr bytes.Buffer

@@ -2355,6 +2355,9 @@ func emitUnassessedFilterWarning(output io.Writer, stageName string, bom corpus.
 }
 
 func materializeModelStage(context Context, stage model.Stage, bom corpus.BOM, cache *lookaside.Cache, progress io.Writer, audit bool) (model.PreparedStage, error) {
+	if stage.Parameters.Epochs > 0 {
+		fmt.Fprintf(progress, "preflight/%s          epoch-based training requires every selected shard to be materialized (or reused from cache) and hash-verified so WALDO can apply filters, tokenize each complete corpus pass, and determine the exact optimizer-step count before GPU training\n", stage.Name)
+	}
 	fmt.Fprintf(progress, "preflight/%s          resolving %s shards, %s records, %s reference tokens\n", stage.Name, humanInteger(bom.Totals.Shards), humanCount(bom.Totals.Docs), humanCount(bom.Totals.Tokens))
 	materialized, err := corpus.Materialize(context.Execution, bom, cache, modelMaterializeProgressPrinter(progress))
 	if err != nil {
