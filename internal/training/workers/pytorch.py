@@ -72,6 +72,36 @@ def progress_due(step, target_steps, last_report, now, heartbeat_seconds):
     return heartbeat_seconds > 0 and now - last_report >= heartbeat_seconds
 
 
+# Rates cover the window since training (re)started, not the whole run: a resume restores absolute
+# step and token counts while the clock restarts, so dividing them by time since launch overstates both.
+def progress_estimate(step, target_steps, window_steps, window_tokens, window_seconds):
+    seconds = max(window_seconds, 1e-9)
+    throughput = window_tokens / seconds
+    if window_steps <= 0:
+        return throughput, 0
+    return throughput, int(max(0.0, (target_steps - step) * seconds / window_steps))
+
+
+class RateWindow:
+    """The window progress_estimate measures. A fresh run measures from launch. After a resume it opens once
+    the first step after replay has finished, so that step's one-time start-up cost stays out of the rate."""
+
+    def __init__(self, now):
+        self.started = now
+        self.step = 0
+        self.tokens = 0
+        self.pending = False
+
+    def restart(self):
+        self.pending = True
+
+    def estimate(self, step, target_steps, tokens, now):
+        if self.pending:
+            self.pending = False
+            self.started, self.step, self.tokens = now, step, tokens
+        return progress_estimate(step, target_steps, step - self.step, tokens - self.tokens, now - self.started)
+
+
 def artifact(path, logical_path):
     digest = hashlib.sha256()
     size = 0
@@ -477,6 +507,7 @@ class Trainer:
         self.accumulated_compute_seconds = 0.0
         self.last_report = self.started
         self.heartbeat_seconds = read_progress_heartbeat()
+        self.rate_window = RateWindow(self.started)
 
         tokenizer = begin["tokenizer"]
         architecture_tokenizer = self.architecture["tokenizer"]
@@ -785,6 +816,9 @@ class Trainer:
                         "message": message,
                     },
                 )
+            if self.replay_micro_batches == 0:
+                # Replay only fast-forwards the data stream. Speed is measured from the next trained step.
+                self.rate_window.restart()
             return
         step_started = time.perf_counter()
         self.data_wait_seconds += max(0.0, step_started - self.last_step_finished)
@@ -882,9 +916,9 @@ class Trainer:
         self.final_loss = loss_value
         self.accumulation_number = 0
         now = time.perf_counter()
-        elapsed = max(now - self.started, 1e-9)
-        throughput = self.consumed_tokens / elapsed
-        eta = int(max(0.0, (self.target_steps - self.step_number) * elapsed / self.step_number))
+        throughput, eta = self.rate_window.estimate(
+            self.step_number, self.target_steps, self.consumed_tokens, now
+        )
         heartbeat_due = progress_due(
             self.step_number, self.target_steps, self.last_report, now, self.heartbeat_seconds
         )
